@@ -4,11 +4,13 @@
 Updates:
 - pyproject.toml
 - uv.lock (via `uv lock`)
+- sdk/node/package.json
 - sdk/java/pom.xml
 - Formula/buildanchor.rb
 """
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -17,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = ROOT / "pyproject.toml"
 POM_PATH = ROOT / "sdk" / "java" / "pom.xml"
+NODE_PACKAGE_PATH = ROOT / "sdk" / "node" / "package.json"
 FORMULA_PATH = ROOT / "Formula" / "buildanchor.rb"
 
 
@@ -83,6 +86,17 @@ def update_pom(new_version: str) -> None:
     print(f"✓ Updated {POM_PATH.relative_to(ROOT)} -> {new_version}")
 
 
+def update_node_package(new_version: str) -> None:
+    if not NODE_PACKAGE_PATH.exists():
+        return
+    package = json.loads(NODE_PACKAGE_PATH.read_text(encoding="utf-8"))
+    package["version"] = new_version
+    NODE_PACKAGE_PATH.write_text(
+        json.dumps(package, indent=2) + "\n", encoding="utf-8"
+    )
+    print(f"✓ Updated {NODE_PACKAGE_PATH.relative_to(ROOT)} -> {new_version}")
+
+
 def update_formula(new_version: str) -> None:
     if not FORMULA_PATH.exists():
         return
@@ -128,6 +142,7 @@ def main() -> int:
 
     update_pyproject(new_version)
     update_uv_lock()
+    update_node_package(new_version)
     update_pom(new_version)
     update_formula(new_version)
 

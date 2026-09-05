@@ -5,10 +5,65 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
+from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+from typing import Callable, TextIO
 
 from .engine import BuildAnchor, BuildAnchorError
 from .transports import MCPServer, serve_http
+
+
+@dataclass(frozen=True)
+class _CLIIdentity:
+    """Terminal brand assets owned exclusively by the command-line interface."""
+
+    name: str
+    tagline: str
+    wordmark: str
+
+
+_CLI_IDENTITY = _CLIIdentity(
+    name="BuildAnchor",
+    tagline="Build Truth for AI coding agents",
+    wordmark=(
+        " ____        _ _     _    _             _\n"
+        "| __ ) _   _(_) | __| |  / \\   _ __   ___| |__   ___  _ __\n"
+        "|  _ \\| | | | | |/ _` | / _ \\ | '_ \\ / __| '_ \\ / _ \\| '__|\n"
+        "| |_) | |_| | | | (_| |/ ___ \\| | | | (__| | | | (_) | |\n"
+        "|____/ \\__,_|_|_|\\__,_/_/   \\_\\_| |_|\\___|_| |_|\\___/|_|"
+    ),
+)
+
+
+def _buildanchor_version() -> str:
+    """Read the installed distribution version without duplicating release metadata."""
+    try:
+        return version("buildanchor")
+    except PackageNotFoundError:
+        return "development"
+
+
+def _should_render_cli_banner(args: argparse.Namespace) -> bool:
+    """Keep human-facing branding out of protocols and machine-readable output."""
+    return (
+        sys.stdout.isatty()
+        and args.command not in {"mcp", "serve"}
+        and args.format == "text"
+        and not args.agent
+        and not args.ci
+    )
+
+
+def _render_cli_banner(output: TextIO | None = None) -> None:
+    """Render the terminal wordmark once at the start of a human CLI session."""
+    output = output or sys.stdout
+    output.write(f"{_CLI_IDENTITY.wordmark}\n")
+    output.write(f"{_CLI_IDENTITY.name} {_buildanchor_version()} | {_CLI_IDENTITY.tagline}\n\n")
+    output.flush()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -23,7 +78,7 @@ def _parser() -> argparse.ArgumentParser:
             "inspect", "context", "preflight", "plan",
             "change-impact", "validate-change", "repair", "compatibility",
             "explain-dependency", "find", "cmd", "modules", "init",
-            "mcp", "serve",
+            "mcp", "serve", "setup-copilot", "setup-mcp",
         ],
     )
     parser.add_argument(
@@ -83,8 +138,512 @@ def _parser() -> argparse.ArgumentParser:
                         help="Add a plain-English 'why:' explanation to each finding.")
     parser.add_argument("--staged", action="store_true",
                         help="Only inspect files staged in git (for pre-commit hooks).")
+    parser.add_argument("--force", action="store_true",
+                        help="Replace an existing BuildAnchor MCP server configuration when used with setup-copilot.")
+    parser.add_argument("--clients", default="copilot",
+                        help=("Comma-separated MCP clients for setup-mcp: "
+                              "copilot,cursor,claude-code,claude-desktop,codex,all. "
+                              "'claude' is an alias for claude-code."))
+    parser.add_argument("-i", "--interactive", action="store_true",
+                        help="Interactively collect inputs; setup-mcp uses a keyboard client selector.")
 
     return parser
+
+
+def _mcp_server_spec(workspace: Path, workspace_variable: bool = False) -> dict[str, object]:
+    return {
+        # Keep the virtual-environment interpreter path intact. Resolving its
+        # symlink on macOS can bypass the environment's installed packages.
+        "command": str(Path(sys.executable).absolute()),
+        "args": [
+            "-m", "buildanchor", "mcp", "--stdio", "--allow-root",
+            "${workspaceFolder}" if workspace_variable else str(workspace),
+        ],
+    }
+
+
+@dataclass(frozen=True)
+class _MCPClientOption:
+    """One installable MCP client and the scope its configuration owns."""
+
+    identifier: str
+    name: str
+    configuration_scope: str
+    configuration_location: str
+
+
+# This registry is the single source of truth for accepted client identifiers,
+# interactive labels, display order, and the meaning of `all`.
+_MCP_CLIENT_OPTIONS = (
+    _MCPClientOption("copilot", "GitHub Copilot", "Repository", ".vscode/mcp.json"),
+    _MCPClientOption("cursor", "Cursor", "Repository", ".cursor/mcp.json"),
+    _MCPClientOption("claude-code", "Claude Code", "Repository", ".mcp.json"),
+    _MCPClientOption("claude-desktop", "Claude Desktop", "Global", "Claude Desktop settings"),
+    _MCPClientOption("codex", "Codex", "Global", "~/.codex/config.toml"),
+)
+
+
+def _mcp_client_ids() -> tuple[str, ...]:
+    return tuple(option.identifier for option in _MCP_CLIENT_OPTIONS)
+
+
+def _select_mcp_clients_prompt(
+    input_fn: Callable[[str], str] = input,
+    output: TextIO = sys.stdout,
+) -> str:
+    """Fallback selector for piped input and terminals without raw-key support."""
+    selected: set[str] = set()
+    while True:
+        print("\nSelect MCP clients:", file=output)
+        for index, option in enumerate(_MCP_CLIENT_OPTIONS, start=1):
+            marker = "x" if option.identifier in selected else " "
+            print(
+                f"  {index}. [{marker}] {option.name} "
+                f"({option.configuration_scope.lower()})",
+                file=output,
+            )
+        choice = input_fn("Toggle numbers (for example 1,3); a=all; n=none; i=install; q=cancel: ").strip().lower()
+        if choice == "q":
+            raise BuildAnchorError("MCP setup cancelled")
+        if choice == "a":
+            selected = set(_mcp_client_ids())
+            continue
+        if choice == "n":
+            selected.clear()
+            continue
+        if choice == "i":
+            if selected:
+                return ",".join(client for client in _mcp_client_ids() if client in selected)
+            print("Select at least one client before installing.", file=output)
+            continue
+        try:
+            indexes = {int(item.strip()) for item in choice.split(",") if item.strip()}
+        except ValueError:
+            indexes = set()
+        if not indexes or any(index < 1 or index > len(_MCP_CLIENT_OPTIONS) for index in indexes):
+            print("Enter one or more displayed numbers, or a, n, i, or q.", file=output)
+            continue
+        for index in indexes:
+            client = _MCP_CLIENT_OPTIONS[index - 1].identifier
+            if client in selected:
+                selected.remove(client)
+            else:
+                selected.add(client)
+
+
+@dataclass(frozen=True)
+class _TerminalPalette:
+    """ANSI presentation owned by the interactive terminal experience."""
+
+    accent: str
+    title: str
+    muted: str
+    selected: str
+    reset: str
+
+
+_TERMINAL_PALETTE = _TerminalPalette(
+    accent="\x1b[38;5;111m",
+    title="\x1b[1;38;5;255m",
+    muted="\x1b[38;5;245m",
+    selected="\x1b[38;5;114m",
+    reset="\x1b[0m",
+)
+
+
+def _selector_colors_enabled(output: TextIO) -> bool:
+    """Respect standard terminal conventions and keep redirected output plain."""
+    return (
+        output.isatty()
+        and os.environ.get("NO_COLOR") is None
+        and os.environ.get("TERM") != "dumb"
+    )
+
+
+def _selector_style(value: str, color: str, enabled: bool) -> str:
+    if not enabled:
+        return value
+    return f"{color}{value}{_TERMINAL_PALETTE.reset}"
+
+
+def _selector_width() -> int:
+    """Fit the setup surface to the active terminal without horizontal overflow."""
+    columns = shutil.get_terminal_size(fallback=(80, 24)).columns
+    return max(20, min(88, columns - 2))
+
+
+def _selector_fit(value: str, width: int) -> str:
+    if len(value) <= width:
+        return value
+    return value[: max(1, width - 3)] + "..."
+
+
+def _render_mcp_client_selector(
+    output: TextIO,
+    selected: set[str],
+    cursor: int,
+    workspace: Path,
+    message: str = "",
+) -> None:
+    """Render a focused, keyboard-first setup surface in the alternate screen."""
+    # The selector runs on the alternate screen. Clear only that screen so
+    # normal terminal scrollback and the invoking command remain intact.
+    colors_enabled = _selector_colors_enabled(output)
+    width = _selector_width()
+    inner_width = width - 4
+
+    def frame(
+        left: str = "",
+        right: str = "",
+        left_color: str | None = None,
+        right_color: str | None = None,
+    ) -> str:
+        right = _selector_fit(right, max(1, inner_width - 1))
+        available = inner_width - len(right)
+        left = _selector_fit(left, max(1, available))
+        spacing = " " * max(0, inner_width - len(left) - len(right))
+        left = _selector_style(left, left_color, colors_enabled) if left_color else left
+        right = _selector_style(right, right_color, colors_enabled) if right_color else right
+        return f"| {left}{spacing}{right} |\n"
+
+    selected_count = len(selected)
+    selected_label = f"{selected_count} selected"
+
+    output.write("\x1b[H\x1b[J")
+    output.write(_selector_style("+" + "-" * (width - 2) + "+\n", _TERMINAL_PALETTE.accent, colors_enabled))
+    output.write(frame(
+        "BUILDANCHOR",
+        f"MCP SETUP  v{_buildanchor_version()}",
+        _TERMINAL_PALETTE.title,
+        _TERMINAL_PALETTE.muted,
+    ))
+    output.write(frame("Build Truth for AI coding agents", left_color=_TERMINAL_PALETTE.muted))
+    output.write(_selector_style("+" + "-" * (width - 2) + "+\n", _TERMINAL_PALETTE.accent, colors_enabled))
+    output.write("\n")
+    output.write(_selector_style("  WORKSPACE\n", _TERMINAL_PALETTE.muted, colors_enabled))
+    output.write(f"  {_selector_fit(str(workspace), width - 4)}\n\n")
+    output.write(_selector_style("  SELECT MCP CLIENTS", _TERMINAL_PALETTE.title, colors_enabled))
+    output.write("  ")
+    output.write(_selector_style(selected_label, _TERMINAL_PALETTE.selected, colors_enabled))
+    output.write("\n\n")
+    for index, option in enumerate(_MCP_CLIENT_OPTIONS):
+        pointer = ">" if index == cursor else " "
+        marker = "x" if option.identifier in selected else " "
+        client_line = f"  {pointer} [{marker}] {option.name}  {option.configuration_scope}"
+        output.write(f"{_selector_style(_selector_fit(client_line, width - 2), _TERMINAL_PALETTE.selected if option.identifier in selected else _TERMINAL_PALETTE.title, colors_enabled)}\n")
+        output.write(f"      {_selector_fit(option.configuration_location, width - 6)}\n")
+    output.write("\n")
+    output.write(_selector_style("  [Up/Down] Move   [Space] Toggle   [Enter] Install   [q] Cancel\n", _TERMINAL_PALETTE.muted, colors_enabled))
+    if message:
+        output.write(f"\n  {_selector_style(message, _TERMINAL_PALETTE.accent, colors_enabled)}\n")
+    output.flush()
+
+
+def _select_mcp_clients_keyboard(
+    read_key: Callable[[], str],
+    output: TextIO,
+    workspace: Path | None = None,
+) -> str:
+    """Render and operate a keyboard-first terminal checkbox selector."""
+    selected: set[str] = set()
+    cursor = 0
+    message = ""
+    workspace = workspace or Path.cwd()
+    while True:
+        _render_mcp_client_selector(output, selected, cursor, workspace, message)
+        key = read_key()
+        message = ""
+        if key in {"\x1b[A", "k"}:
+            cursor = (cursor - 1) % len(_MCP_CLIENT_OPTIONS)
+        elif key in {"\x1b[B", "j"}:
+            cursor = (cursor + 1) % len(_MCP_CLIENT_OPTIONS)
+        elif key == " ":
+            client = _MCP_CLIENT_OPTIONS[cursor].identifier
+            if client in selected:
+                selected.remove(client)
+            else:
+                selected.add(client)
+        elif key in {"\r", "\n"}:
+            if selected:
+                return ",".join(client for client in _mcp_client_ids() if client in selected)
+            message = "Select at least one client before installing."
+        elif key.lower() == "q":
+            raise BuildAnchorError("MCP setup cancelled")
+
+
+def _select_mcp_clients(workspace: Path) -> str:
+    """Use a managed terminal session when possible, with a prompt fallback."""
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return _select_mcp_clients_prompt()
+    try:
+        import termios
+        import tty
+    except ImportError:
+        return _select_mcp_clients_prompt()
+
+    terminal = sys.stdin.fileno()
+    original_settings = termios.tcgetattr(terminal)
+    cbreak_enabled = False
+    alternate_screen_enabled = False
+
+    def read_key() -> str:
+        key = sys.stdin.read(1)
+        if key != "\x1b":
+            return key
+        if sys.stdin.read(1) != "[":
+            return key
+        return key + "[" + sys.stdin.read(1)
+
+    try:
+        # cbreak disables line buffering and echo but preserves output
+        # post-processing. Raw mode disabled it, which caused newlines to
+        # advance vertically without returning to column zero.
+        tty.setcbreak(terminal)
+        cbreak_enabled = True
+        sys.stdout.write("\x1b[?1049h\x1b[?25l")
+        sys.stdout.flush()
+        alternate_screen_enabled = True
+        return _select_mcp_clients_keyboard(read_key, sys.stdout, workspace)
+    except KeyboardInterrupt as exc:
+        raise BuildAnchorError("MCP setup cancelled") from exc
+    finally:
+        if alternate_screen_enabled:
+            sys.stdout.write("\x1b[?25h\x1b[?1049l")
+            sys.stdout.flush()
+        if cbreak_enabled:
+            termios.tcsetattr(terminal, termios.TCSADRAIN, original_settings)
+
+
+def _setup_json_mcp(config_path: Path, key: str, server: dict[str, object], force: bool) -> str:
+    """Safely merge one local MCP server into a JSON configuration file."""
+    config: dict = {}
+    if config_path.is_file():
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BuildAnchorError(
+                f"cannot update {config_path}: expected valid JSON"
+            ) from exc
+        if not isinstance(config, dict):
+            raise BuildAnchorError(f"cannot update {config_path}: expected a JSON object")
+
+    servers = config.setdefault(key, {})
+    if not isinstance(servers, dict):
+        raise BuildAnchorError(f"cannot update {config_path}: '{key}' must be a JSON object")
+    existing = servers.get("buildanchor")
+    if existing == server:
+        status = "already configured"
+    elif existing is not None and not force:
+        raise BuildAnchorError(
+            "a buildanchor MCP server is already configured; rerun with --force to replace it"
+        )
+    else:
+        servers["buildanchor"] = server
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        status = "updated" if existing is not None else "configured"
+
+    return status
+
+
+def _setup_codex_mcp(config_path: Path, workspace: Path, force: bool) -> str:
+    """Append a bounded stdio server to Codex's TOML configuration."""
+    section = "[mcp_servers.buildanchor]"
+    block = (
+        f'{section}\n'
+        f'command = {json.dumps(str(Path(sys.executable).absolute()))}\n'
+        f'args = {json.dumps(["-m", "buildanchor", "mcp", "--stdio", "--allow-root", str(workspace)])}\n'
+    )
+    content = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
+    if section in content:
+        start = content.index(section)
+        next_section = content.find("\n[", start + len(section))
+        existing_block = content[start:next_section if next_section >= 0 else len(content)].strip()
+        if existing_block == block.strip():
+            return "already configured"
+        if not force:
+            raise BuildAnchorError(
+                "a buildanchor Codex MCP server is already configured; rerun with --force to replace it"
+            )
+        content = content[:start] + (content[next_section + 1:] if next_section >= 0 else "")
+        status = "updated"
+    else:
+        status = "configured"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(content.rstrip() + "\n\n" + block, encoding="utf-8")
+    return status
+
+
+def _claude_config_path(home: Path) -> Path:
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    if sys.platform.startswith("win"):
+        return Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming"))) / "Claude" / "claude_desktop_config.json"
+    return home / ".config" / "Claude" / "claude_desktop_config.json"
+
+
+def _setup_mcp_clients(workspace: Path, clients: str, force: bool = False, home: Path | None = None) -> list[dict[str, str]]:
+    """Configure supported local MCP clients without overwriting other servers."""
+    requested = {client.strip().lower() for client in clients.split(",") if client.strip()}
+    if "all" in requested:
+        requested = set(_mcp_client_ids())
+    aliases = {"claude": "claude-code", "gpt": "codex"}
+    requested = {aliases.get(client, client) for client in requested}
+    unknown = requested - set(_mcp_client_ids())
+    if unknown:
+        raise BuildAnchorError(f"unsupported MCP client(s): {', '.join(sorted(unknown))}")
+    if not requested:
+        raise BuildAnchorError("at least one MCP client is required")
+
+    user_home = home or Path.home()
+    outcomes: list[dict[str, str]] = []
+    if "copilot" in requested:
+        path = workspace / ".vscode" / "mcp.json"
+        outcomes.append({"client": "copilot", "status": _setup_json_mcp(path, "servers", _mcp_server_spec(workspace, workspace_variable=True), force), "config_file": str(path)})
+    if "cursor" in requested:
+        path = workspace / ".cursor" / "mcp.json"
+        outcomes.append({"client": "cursor", "status": _setup_json_mcp(path, "mcpServers", _mcp_server_spec(workspace), force), "config_file": str(path)})
+    if "claude-code" in requested:
+        path = workspace / ".mcp.json"
+        outcomes.append({"client": "claude-code", "status": _setup_json_mcp(path, "mcpServers", _mcp_server_spec(workspace), force), "config_file": str(path)})
+    if "claude-desktop" in requested:
+        path = _claude_config_path(user_home)
+        outcomes.append({"client": "claude-desktop", "status": _setup_json_mcp(path, "mcpServers", _mcp_server_spec(workspace), force), "config_file": str(path)})
+    if "codex" in requested:
+        path = user_home / ".codex" / "config.toml"
+        outcomes.append({"client": "codex", "status": _setup_codex_mcp(path, workspace, force), "config_file": str(path)})
+    return outcomes
+
+
+@dataclass(frozen=True)
+class _InteractiveField:
+    """A command input owned by BuildAnchor's shared interactive workflow."""
+
+    attribute: str
+    label: str
+    hint: str
+    required: bool = False
+    choices: tuple[str, ...] = ()
+    numeric: bool = False
+    boolean: bool = False
+
+
+_INTERACTIVE_FIELDS: dict[str, tuple[_InteractiveField, ...]] = {
+    "llm-prompt": (_InteractiveField("objective", "Objective", "Optional; describe the intended change."),),
+    "context": (_InteractiveField("token_budget", "Token budget", "Maximum context tokens.", numeric=True),),
+    "preflight": (_InteractiveField("objective", "Objective", "Optional; check a proposed change against this workspace."),),
+    "plan": (_InteractiveField("objective", "Objective", "Describe the change you want to plan.", required=True),),
+    "change-impact": (
+        _InteractiveField("baseline", "Baseline", "Git revision to compare against."),
+        _InteractiveField("staged", "Use staged changes only", "Analyze only staged files.", boolean=True),
+    ),
+    "validate-change": (
+        _InteractiveField("baseline", "Baseline", "Git revision to compare against."),
+        _InteractiveField("staged", "Use staged changes only", "Analyze only staged files.", boolean=True),
+        _InteractiveField("execute", "Run validation probes", "May execute detected build or test commands.", boolean=True),
+    ),
+    "explain-dependency": (_InteractiveField("dependency", "Dependency", "Package or coordinate to explain.", required=True),),
+    "find": (_InteractiveField("package", "Package", "Package name to find.", required=True),),
+    "cmd": (
+        _InteractiveField("phase", "Build phase", "Choose test, build, lint, format, or clean.", choices=("test", "build", "lint", "format", "clean")),
+        _InteractiveField("scope", "Scope", "Optional: ui, backend, shared, package name, or path."),
+        _InteractiveField("changed", "Target changed modules only", "Limit the command to modified modules.", boolean=True),
+    ),
+    "serve": (_InteractiveField("listen", "Listen address", "Host and port for the HTTP server."),),
+}
+
+
+def _interactive_default(args: argparse.Namespace, field: _InteractiveField) -> str:
+    value = getattr(args, field.attribute)
+    if field.boolean:
+        return "yes" if value else "no"
+    return str(value or "")
+
+
+def _interactive_value(raw: str, field: _InteractiveField) -> object:
+    if field.boolean:
+        if raw.lower() in {"y", "yes", "true", "1"}:
+            return True
+        if raw.lower() in {"n", "no", "false", "0"}:
+            return False
+        raise ValueError("enter yes or no")
+    if field.numeric:
+        value = int(raw)
+        if value <= 0:
+            raise ValueError("enter a positive number")
+        return value
+    if field.choices and raw.lower() not in field.choices:
+        raise ValueError(f"choose one of: {', '.join(field.choices)}")
+    return raw
+
+
+def _render_interactive_header(command: str, workspace: Path, output: TextIO) -> None:
+    colors_enabled = _selector_colors_enabled(output)
+    output.write("\n")
+    output.write(_selector_style(f"  {command.upper()}  /  INTERACTIVE MODE\n", _TERMINAL_PALETTE.title, colors_enabled))
+    output.write(_selector_style(f"  Workspace: {workspace}\n", _TERMINAL_PALETTE.muted, colors_enabled))
+    output.write(_selector_style("  Press Enter to accept a default. Type q to cancel.\n\n", _TERMINAL_PALETTE.muted, colors_enabled))
+    output.flush()
+
+
+def _collect_interactive_inputs(
+    args: argparse.Namespace,
+    workspace: Path,
+    input_fn: Callable[[], str] | None = None,
+    output: TextIO | None = None,
+) -> None:
+    """Collect each command's optional inputs through one predictable terminal flow."""
+    input_fn = input_fn or input
+    output = output or sys.stdout
+    fields = _INTERACTIVE_FIELDS.get(args.command, ())
+    _render_interactive_header(args.command, workspace, output)
+    if not fields:
+        output.write("  This command has no additional inputs. Continuing with workspace defaults.\n\n")
+        output.flush()
+        return
+
+    for field in fields:
+        default = _interactive_default(args, field)
+        while True:
+            output.write(_selector_style(f"  {field.label}\n", _TERMINAL_PALETTE.title, _selector_colors_enabled(output)))
+            output.write(_selector_style(f"  {field.hint}\n", _TERMINAL_PALETTE.muted, _selector_colors_enabled(output)))
+            suffix = f" [{default}]" if default else ""
+            output.write(f"  >{suffix} ")
+            output.flush()
+            try:
+                raw = input_fn().strip()
+            except (EOFError, KeyboardInterrupt) as exc:
+                raise BuildAnchorError("interactive input cancelled") from exc
+            if raw.lower() == "q":
+                raise BuildAnchorError("interactive input cancelled")
+            if not raw:
+                raw = default
+            if not raw and field.required:
+                output.write(_selector_style("  An answer is required.\n\n", _TERMINAL_PALETTE.accent, _selector_colors_enabled(output)))
+                continue
+            if not raw:
+                setattr(args, field.attribute, "")
+                break
+            try:
+                setattr(args, field.attribute, _interactive_value(raw, field))
+                break
+            except ValueError as exc:
+                output.write(_selector_style(f"  {exc}. Try again.\n\n", _TERMINAL_PALETTE.accent, _selector_colors_enabled(output)))
+
+        output.write("\n")
+        output.flush()
+
+
+def _validate_interactive_mode(args: argparse.Namespace) -> None:
+    """Prevent prompts or branding from corrupting protocol and structured output."""
+    if not args.interactive:
+        return
+    if args.command == "mcp":
+        raise BuildAnchorError("mcp is a stdio protocol server and cannot run interactively")
+    if args.ci or args.agent or args.format != "text":
+        raise BuildAnchorError("--interactive requires human-readable text output outside CI and agent modes")
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise BuildAnchorError("--interactive requires an attached terminal")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -97,15 +656,39 @@ def main(argv: list[str] | None = None) -> int:
         args.exit_on_mismatch = True
 
     try:
+        _validate_interactive_mode(args)
+
+        if _should_render_cli_banner(args):
+            _render_cli_banner()
+
         if args.command == "mcp":
             MCPServer(args.allow_root or args.workspace).run(sys.stdin, sys.stdout)
             return 0
+
+        engine = BuildAnchor(args.workspace, args.allow_root)
+
+        if args.interactive and args.command != "setup-mcp":
+            _collect_interactive_inputs(args, engine.workspace)
+
         if args.command == "serve":
             host, port = args.listen.rsplit(":", 1)
             serve_http(args.allow_root or args.workspace, host, int(port))
             return 0
 
-        engine = BuildAnchor(args.workspace, args.allow_root)
+        if args.command in {"setup-copilot", "setup-mcp"}:
+            clients = (
+                "copilot" if args.command == "setup-copilot"
+                else _select_mcp_clients(engine.workspace) if args.interactive
+                else args.clients
+            )
+            result = _setup_mcp_clients(engine.workspace, clients, force=args.force)
+            if args.format == "json":
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                for outcome in result:
+                    print(f"{outcome['client']}: {outcome['status']}")
+                    print(f"  Config: {outcome['config_file']}")
+            return 0
 
         # --assert-ecosystem: check before doing anything else
         if args.assert_ecosystem:
@@ -330,7 +913,10 @@ def main(argv: list[str] | None = None) -> int:
             matches = [item for item in report.dependencies if args.dependency.lower() in str(item.get("coordinate", "")).lower()]
             result = {"schema_version": "v1", "session_id": report.session_id, "dependency": args.dependency, "matches": matches, "status": "valid" if matches else "unknown"}
         else:
-            result = engine.repair_guidance(report=report)
+            result = engine.repair_guidance(
+                report=report,
+                change=engine.change_impact(args.baseline, report, staged=args.staged),
+            )
 
         # --only-errors: filter warnings from recommendations
         if args.only_errors:
@@ -360,6 +946,10 @@ def main(argv: list[str] | None = None) -> int:
     except BuildAnchorError as exc:
         if args.ci:
             print(f"::error ::BuildAnchor: {exc}")
+        elif args.format == "text" and sys.stderr.isatty():
+            print(f"BuildAnchor blocked: {exc}", file=sys.stderr)
+            if not args.interactive and args.command not in {"mcp", "serve"}:
+                print(f"Tip: run `buildanchor {args.command} --interactive` for guided input.", file=sys.stderr)
         else:
             print(json.dumps({"status": "blocked", "error": str(exc)}), file=sys.stderr)
         return 4

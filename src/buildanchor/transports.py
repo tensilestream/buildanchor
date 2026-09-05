@@ -10,6 +10,26 @@ from typing import Any
 
 from .engine import BuildAnchor, BuildAnchorError
 
+
+# HTTP routes are owned by the HTTP transport. SDKs derive their operation
+# paths from this registry instead of maintaining divergent endpoint lists.
+HTTP_ENDPOINTS = {
+    "/v1/llm-prompt": "build.llm_prompt",
+    "/v1/token-estimate": "build.token_estimate",
+    "/v1/inspect": "build.inspect",
+    "/v1/context": "build.context",
+    "/v1/preflight": "build.preflight",
+    "/v1/plan": "build.plan",
+    "/v1/change-impact": "build.change_impact",
+    "/v1/validate-change": "build.validate_change",
+    "/v1/repair-guidance": "build.repair_guidance",
+    "/v1/compatibility": "build.compatibility",
+    "/v1/explain-dependency": "build.explain_dependency",
+    "/v1/find-package": "build.find_package",
+    "/v1/cmd": "build.cmd",
+    "/v1/modules": "build.modules",
+}
+
 # ---------------------------------------------------------------------------
 # MCP tool registry — descriptions include explicit "when to call" rules
 # so agents choose the cheapest tool on the first attempt.
@@ -107,6 +127,7 @@ TOOLS = [
             "properties": {
                 "workspace": {"type": "string"},
                 "baseline": {"type": "string", "description": "Git ref (commit/branch/tag). Default: HEAD."},
+                "staged": {"type": "boolean", "description": "Analyze only staged files."},
             },
         },
     },
@@ -124,6 +145,7 @@ TOOLS = [
                 "baseline": {"type": "string"},
                 "execute": {"type": "boolean"},
                 "timeout": {"type": "integer", "minimum": 1, "maximum": 900},
+                "staged": {"type": "boolean", "description": "Validate only staged files."},
             },
         },
     },
@@ -138,6 +160,7 @@ TOOLS = [
             "properties": {
                 "workspace": {"type": "string"},
                 "baseline": {"type": "string"},
+                "staged": {"type": "boolean", "description": "Use staged changes for repair context."},
             },
         },
     },
@@ -167,6 +190,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "workspace": {"type": "string"},
+                "freshness": {"type": "string", "enum": ["cached", "refresh"]},
             },
         },
     },
@@ -327,7 +351,10 @@ class MCPServer:
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         engine = self._engine(arguments.get("workspace"))
-        report = engine._inspect_cached()
+        freshness = str(arguments.get("freshness", "cached"))
+        if freshness not in {"cached", "refresh"}:
+            raise BuildAnchorError("freshness must be 'cached' or 'refresh'")
+        report = engine.inspect() if freshness == "refresh" else engine._inspect_cached()
         if name == "build.llm_prompt":
             block = engine.llm_prompt(str(arguments.get("objective", "")))
             return block.to_dict()
@@ -342,11 +369,28 @@ class MCPServer:
         if name == "build.plan":
             return engine.plan(str(arguments.get("objective", "")), int(arguments.get("token_budget", 2500)))
         if name == "build.change_impact":
-            return engine.change_impact(str(arguments.get("baseline", "HEAD")), report).to_dict()
+            return engine.change_impact(
+                str(arguments.get("baseline", "HEAD")),
+                report,
+                staged=bool(arguments.get("staged", False)),
+            ).to_dict()
         if name == "build.validate_change":
-            return engine.validate_change(str(arguments.get("baseline", "HEAD")), report, execute=bool(arguments.get("execute", False)), timeout_seconds=int(arguments.get("timeout", 300)))
+            return engine.validate_change(
+                str(arguments.get("baseline", "HEAD")),
+                report,
+                execute=bool(arguments.get("execute", False)),
+                timeout_seconds=int(arguments.get("timeout", 300)),
+                staged=bool(arguments.get("staged", False)),
+            )
         if name == "build.repair_guidance":
-            return engine.repair_guidance(report, engine.change_impact(str(arguments.get("baseline", "HEAD")), report))
+            return engine.repair_guidance(
+                report,
+                engine.change_impact(
+                    str(arguments.get("baseline", "HEAD")),
+                    report,
+                    staged=bool(arguments.get("staged", False)),
+                ),
+            )
         if name == "build.compatibility":
             return {"schema_version": "v1", "session_id": report.session_id, "status": "invalid" if any(r["severity"] == "error" for r in report.recommendations) else "valid", "recommendations": report.recommendations}
         if name == "build.explain_dependency":
@@ -403,21 +447,7 @@ class HTTPHandler(BaseHTTPRequestHandler):
             self._send(400, {"status": "blocked", "error": str(exc)})
 
     def _tool_name(self) -> str:
-        return {
-            "/v1/llm-prompt": "build.llm_prompt",
-            "/v1/token-estimate": "build.token_estimate",
-            "/v1/inspect": "build.inspect",
-            "/v1/context": "build.context",
-            "/v1/preflight": "build.preflight",
-            "/v1/plan": "build.plan",
-            "/v1/change-impact": "build.change_impact",
-            "/v1/validate-change": "build.validate_change",
-            "/v1/repair-guidance": "build.repair_guidance",
-            "/v1/explain-dependency": "build.explain_dependency",
-            "/v1/find-package": "build.find_package",
-            "/v1/cmd": "build.cmd",
-            "/v1/modules": "build.modules",
-        }.get(self.path, "")
+        return HTTP_ENDPOINTS.get(self.path, "")
 
     def _send(self, code: int, value: dict[str, Any]) -> None:
         payload = json.dumps(value, indent=2).encode()

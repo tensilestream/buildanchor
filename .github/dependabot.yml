@@ -25,7 +25,18 @@ updates:
       - "dependencies"
       - "java"
 
-  # 3. GitHub Actions Workflows
+  # 3. Node SDK
+  - package-ecosystem: "npm"
+    directory: "/sdk/node"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "node"
+
+  # 4. GitHub Actions Workflows
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

@@ -1,0 +1,43 @@
+{
+  "name": "@tensilestream/buildanchor",
+  "version": "1.0.0",
+  "description": "Dependency-free Node.js SDK for BuildAnchor Build Truth",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tensilestream/buildanchor.git",
+    "directory": "sdk/node"
+  },
+  "bugs": {
+    "url": "https://github.com/tensilestream/buildanchor/issues"
+  },
+  "homepage": "https://github.com/tensilestream/buildanchor#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "ai-agents",
+    "build-validation",
+    "coding-agents",
+    "mcp"
+  ]
+}

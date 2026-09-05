@@ -5,7 +5,7 @@
 
 from .engine import BuildAnchor, BuildAnchorError
 from .models import BuildReport, ChangeReport, ContextPack, PromptBlock
-from .sdk import AsyncBuildAnchorClient, BuildAnchorClient
+from .sdk import AsyncBuildAnchorClient, BuildAnchorClient, BuildAnchorClientError, BuildAnchorHTTPError
 
 __all__ = [
     "BuildReport",
@@ -16,4 +16,6 @@ __all__ = [
     "BuildAnchorError",
     "BuildAnchorClient",
     "AsyncBuildAnchorClient",
+    "BuildAnchorClientError",
+    "BuildAnchorHTTPError",
 ]

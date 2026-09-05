@@ -24,7 +24,7 @@ changelog:
         - "fix"
         - "bug"
         - "bugfix"
-    - title: "🔌 Transports & SDKs (CLI, MCP, Python, Java)"
+    - title: "🔌 Transports & SDKs (CLI, MCP, Python, Node.js, Java)"
       labels:
         - "sdk"
         - "mcp"
