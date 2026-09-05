@@ -1,0 +1,207 @@
+name: Release & Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to release (e.g., v0.3.1). Leave blank to use version from pyproject.toml'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run: validate and build without publishing to PyPI or creating a public release'
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: 'Create GitHub release as a draft for review'
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: 'Mark GitHub release as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write    # Create releases, upload assets, push tags
+  id-token: write    # PyPI Trusted Publishing (OIDC)
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Test & Validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.13']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Java 17 (for Java SDK validation)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Run test suite
+        run: uv run python -m unittest discover -s tests -v
+
+      - name: Compile Java SDK
+        run: |
+          mkdir -p /tmp/buildanchor-java-classes
+          javac --release 17 -d /tmp/buildanchor-java-classes sdk/java/src/main/java/com/buildanchor/*.java
+
+      - name: Run benchmark smoke test
+        run: uv run python benchmarks/benchmark_cli.py --iterations 3 --warmups 1 --format json
+
+  build:
+    name: Build Distribution Packages
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.resolve_tag.outputs.tag }}
+      version: ${{ steps.resolve_tag.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Resolve Release Tag & Version
+        id: resolve_tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+            # Strip leading 'v' if present for raw version
+            RAW_VERSION="${TAG#v}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            RAW_VERSION="${TAG#v}"
+          else
+            RAW_VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml', 'rb'); print(tomllib.load(f)['project']['version'])")
+            TAG="v${RAW_VERSION}"
+          fi
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${RAW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved Tag: ${TAG} (Version: ${RAW_VERSION})"
+
+          # If triggered via workflow_dispatch and tag doesn't exist remotely yet, tag HEAD
+          if ! git rev-parse "${TAG}" >/dev/null 2>&1; then
+            echo "Creating and pushing git tag ${TAG}..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "${TAG}"
+          fi
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Generate SHA256 Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildanchor-dist
+          path: dist/
+          retention-days: 7
+
+  github-release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.inputs.dry_run }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: buildanchor-dist
+          path: dist/
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.release_tag }}
+          name: BuildAnchor ${{ needs.build.outputs.release_tag }}
+          generate_release_notes: true
+          draft: ${{ github.event.inputs.draft || false }}
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, github-release]
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.inputs.dry_run && !github.event.inputs.draft }}
+    environment:
+      name: pypi
+      url: https://pypi.org/p/buildanchor
+    steps:
+      - name: Download built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: buildanchor-dist
+          path: dist/
+
+      - name: Publish to PyPI (via PYPI_API_TOKEN secret)
+        if: ${{ secrets.PYPI_API_TOKEN != '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist/
+          skip-existing: true
+
+      - name: Publish to PyPI (via Trusted Publishing OIDC)
+        if: ${{ secrets.PYPI_API_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true

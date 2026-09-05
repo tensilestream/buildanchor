@@ -2,6 +2,16 @@
 
 All notable changes to BuildAnchor are documented here.
 
+## [0.3.1] - 2026-09-05
+
+### Added
+
+- **Monorepo Topology Intelligence**: Automatic discovery and component mapping across 8 major ecosystems (pnpm, npm/yarn workspaces, Cargo, Gradle multi-project, Maven multi-module, Go multi-module, Nx, and Turborepo).
+- **Semantic Component Categorization**: Auto-classifies monorepo packages into `ui`, `backend`, and `shared` scopes.
+- **Scoped Command Resolution**: Execute targeted tests and builds via `buildanchor cmd --scope <ui|backend|shared|module>` or `--changed [baseline]`.
+- **Monorepo Inspection Tools**: Added `buildanchor modules` CLI command and `build.modules` MCP tool for AI coding agents.
+- **Automated CI/CD Release Pipeline**: Added GitHub Actions workflow (`.github/workflows/release.yml`) for automated testing, artifact generation, PyPI publishing, and GitHub Releases with standardized release notes.
+
 ## [0.2.0] - 2026-09-05
 
 ### Added

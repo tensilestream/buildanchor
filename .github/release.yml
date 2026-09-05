@@ -1,0 +1,41 @@
+# Configuration for GitHub's automated release notes generator
+# Ref: https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+
+changelog:
+  exclude:
+    labels:
+      - "ignore-for-release"
+      - "skip-changelog"
+    authors:
+      - "dependabot"
+  categories:
+    - title: "🚀 Features & Enhancements"
+      labels:
+        - "feature"
+        - "enhancement"
+        - "feat"
+    - title: "🏗️ Monorepo & Build Engines"
+      labels:
+        - "monorepo"
+        - "engine"
+        - "build"
+    - title: "🐛 Bug Fixes & Reliability"
+      labels:
+        - "fix"
+        - "bug"
+        - "bugfix"
+    - title: "🔌 Transports & SDKs (CLI, MCP, Python, Java)"
+      labels:
+        - "sdk"
+        - "mcp"
+        - "cli"
+        - "transport"
+    - title: "📝 Documentation & Examples"
+      labels:
+        - "documentation"
+        - "docs"
+    - title: "⚙️ CI/CD & Maintenance"
+      labels:
+        - "ci"
+        - "dependencies"
+        - "chore"
