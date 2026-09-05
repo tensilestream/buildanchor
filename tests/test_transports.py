@@ -93,6 +93,29 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(content["command"], "npm run test")
             self.assertEqual(content["phase"], "test")
 
+    def test_mcp_core_tool_aliases_and_resources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({"scripts": {"test": "mocha"}, "dependencies": {"express": "^4.18.2"}}), encoding="utf-8")
+            server = MCPServer(str(root))
+
+            # Test resources/list
+            res = server.handle({"jsonrpc": "2.0", "id": 1, "method": "resources/list"})
+            self.assertEqual(res["result"]["resources"], [])
+
+            # Test get_build_truth alias
+            truth = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_build_truth", "arguments": {}}})
+            self.assertIn("content", truth["result"]["structuredContent"])
+
+            # Test find_package alias
+            pkg = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "find_package", "arguments": {"package": "express"}}})
+            self.assertTrue(pkg["result"]["structuredContent"]["found"])
+
+            # Test get_test_command alias
+            cmd = server.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "get_test_command", "arguments": {}}})
+            self.assertEqual(cmd["result"]["structuredContent"]["command"], "npm run test")
+
 
 if __name__ == "__main__":
     unittest.main()
+
