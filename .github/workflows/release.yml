@@ -267,3 +267,38 @@ jobs:
         with:
           packages-dir: dist/
           skip-existing: true
+
+  post-release:
+    name: Auto-Bump Next Version
+    needs: [build, github-release, publish-pypi]
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.dry_run != 'true' && github.event.inputs.draft != 'true' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Auto-increment patch version for next development cycle
+        run: |
+          python3 scripts/bump_version.py --patch
+          NEXT_VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml', 'rb'); print(tomllib.load(f)['project']['version'])")
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml uv.lock sdk/java/pom.xml Formula/buildanchor.rb
+          git commit -m "chore(release): prepare next version v${NEXT_VERSION} [skip ci]"
+          git push origin main || echo "Version bump push skipped (branch up to date or protected)."
+

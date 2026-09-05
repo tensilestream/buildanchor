@@ -259,6 +259,25 @@ uv run python -m unittest discover -s tests -v
 uv run buildanchor inspect --workspace /path/to/another/repository --format text
 ```
 
+### Version management and releases
+
+BuildAnchor synchronizes versions across Python (`pyproject.toml`, `uv.lock`), Java (`sdk/java/pom.xml`), and Homebrew (`Formula/buildanchor.rb`).
+
+Use the atomic version helper to update all files simultaneously:
+
+```bash
+# Bump patch (e.g. 0.3.3 -> 0.3.4):
+python3 scripts/bump_version.py --patch
+
+# Bump minor (e.g. 0.3.3 -> 0.4.0):
+python3 scripts/bump_version.py --minor
+
+# Explicit version:
+python3 scripts/bump_version.py 1.0.0
+```
+
+> **Automated CI/CD Releases**: Pushing a tag (`git tag v0.3.3 && git push origin v0.3.3`) or dispatching the **Release & Publish** action builds packages, attaches release notes and checksums to GitHub Releases, publishes to PyPI, updates the Homebrew tap, and auto-increments the next development version on `main`.
+
 The platform installer below is for contributors who specifically need the current checkout
 exposed as a command outside `uv run`.
 
