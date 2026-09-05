@@ -6,7 +6,7 @@ the [Java SDK API reference](../../docs/sdk/java.md).
 Maven coordinates:
 
 ```text
-io.github.tensilestream:buildanchor-sdk:1.1.5
+io.github.tensilestream:buildanchor-sdk:1.1.6
 ```
 
 Example:

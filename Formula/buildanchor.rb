@@ -1,8 +1,8 @@
 class Buildanchor < Formula
   desc "Local-first build truth and change validation for AI coding agents"
   homepage "https://github.com/tensilestream/buildanchor"
-  url "https://github.com/tensilestream/buildanchor/archive/refs/tags/v1.1.5.tar.gz"
-  version "1.1.5"
+  url "https://github.com/tensilestream/buildanchor/archive/refs/tags/v1.1.6.tar.gz"
+  version "1.1.6"
 
   depends_on "python"
 
