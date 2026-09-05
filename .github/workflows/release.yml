@@ -162,11 +162,25 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Upload dist artifacts
+      - name: Upload package artifacts for PyPI
         uses: actions/upload-artifact@v4
         with:
-          name: buildanchor-dist
-          path: dist/
+          # PyPI accepts only distribution archives. Keep the checksum manifest
+          # in the release-assets artifact below.
+          name: buildanchor-packages
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          retention-days: 7
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildanchor-release-assets
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
           retention-days: 7
 
   github-release:
@@ -185,7 +199,7 @@ jobs:
       - name: Download built artifacts
         uses: actions/download-artifact@v4
         with:
-          name: buildanchor-dist
+          name: buildanchor-release-assets
           path: dist/
 
       - name: Create or Update GitHub Release
@@ -236,7 +250,7 @@ jobs:
       - name: Download built artifacts
         uses: actions/download-artifact@v4
         with:
-          name: buildanchor-dist
+          name: buildanchor-packages
           path: dist/
 
       - name: Publish to PyPI (via PYPI_API_TOKEN secret)
