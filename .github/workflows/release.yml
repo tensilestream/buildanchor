@@ -27,8 +27,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write    # Create releases, upload assets, push tags
-  id-token: write    # PyPI Trusted Publishing (OIDC)
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -81,6 +80,8 @@ jobs:
     name: Build Distribution Packages
     needs: validate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Create a tag for a non-dry manual release.
     outputs:
       release_tag: ${{ steps.resolve_tag.outputs.tag }}
       version: ${{ steps.resolve_tag.outputs.version }}
@@ -102,31 +103,55 @@ jobs:
 
       - name: Resolve Release Tag & Version
         id: resolve_tag
+        env:
+          DISPATCH_TAG_NAME: ${{ github.event.inputs.tag_name }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
-          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
-            TAG="${{ github.event.inputs.tag_name }}"
-            # Strip leading 'v' if present for raw version
-            RAW_VERSION="${TAG#v}"
+          PROJECT_VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml', 'rb'); print(tomllib.load(f)['project']['version'])")
+
+          if [ -n "${DISPATCH_TAG_NAME}" ]; then
+            TAG="${DISPATCH_TAG_NAME}"
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF_NAME}"
-            RAW_VERSION="${TAG#v}"
           else
-            RAW_VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml', 'rb'); print(tomllib.load(f)['project']['version'])")
-            TAG="v${RAW_VERSION}"
+            TAG="v${PROJECT_VERSION}"
           fi
 
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${RAW_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Resolved Tag: ${TAG} (Version: ${RAW_VERSION})"
+          case "${TAG}" in
+            v*) RAW_VERSION="${TAG#v}" ;;
+            *)
+              echo "Release tags must start with 'v' (received: ${TAG})" >&2
+              exit 1
+              ;;
+          esac
 
-          # If triggered via workflow_dispatch and tag doesn't exist remotely yet, tag HEAD
-          if ! git rev-parse "${TAG}" >/dev/null 2>&1; then
+          if [ -z "${RAW_VERSION}" ] || [ "${RAW_VERSION}" != "${PROJECT_VERSION}" ]; then
+            echo "Release tag ${TAG} must exactly match pyproject.toml version ${PROJECT_VERSION}." >&2
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            TAG_COMMIT=$(git rev-list -n 1 "refs/tags/${TAG}")
+            if [ "${TAG_COMMIT}" != "$(git rev-parse HEAD)" ]; then
+              echo "Release tag ${TAG} does not point to the checked-out commit." >&2
+              exit 1
+            fi
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${DRY_RUN}" != "true" ]; then
             echo "Creating and pushing git tag ${TAG}..."
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git tag -a "${TAG}" -m "Release ${TAG}"
             git push origin "${TAG}"
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "Dry run: not creating tag ${TAG}."
+          else
+            echo "Expected release tag ${TAG} was not found." >&2
+            exit 1
           fi
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${PROJECT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved Tag: ${TAG} (Version: ${PROJECT_VERSION})"
 
       - name: Build sdist and wheel
         run: uv build
@@ -148,7 +173,9 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ !github.event.inputs.dry_run }}
+    if: ${{ github.event.inputs.dry_run != 'true' }}
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -167,8 +194,8 @@ jobs:
           tag_name: ${{ needs.build.outputs.release_tag }}
           name: BuildAnchor ${{ needs.build.outputs.release_tag }}
           generate_release_notes: true
-          draft: ${{ github.event.inputs.draft || false }}
-          prerelease: ${{ github.event.inputs.prerelease || false }}
+          draft: ${{ github.event.inputs.draft == 'true' }}
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
           files: |
             dist/*.whl
             dist/*.tar.gz
@@ -176,11 +203,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Update Homebrew Formula
+        if: ${{ github.event.inputs.draft != 'true' }}
+        run: |
+          TAG="${{ needs.build.outputs.release_tag }}"
+          VERSION="${{ needs.build.outputs.version }}"
+          sed -i.bak "s|archive/refs/tags/.*\.tar\.gz|archive/refs/tags/${TAG}.tar.gz|" Formula/buildanchor.rb
+          sed -i.bak "s|version \".*\"|version \"${VERSION}\"|" Formula/buildanchor.rb
+          rm -f Formula/buildanchor.rb.bak
+          if ! git diff --quiet Formula/buildanchor.rb; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add Formula/buildanchor.rb
+            git commit -m "chore(homebrew): update formula to ${TAG}"
+            git push origin main || echo "Homebrew formula already up to date on branch."
+          fi
+
   publish-pypi:
     name: Publish to PyPI
     needs: [build, github-release]
     runs-on: ubuntu-latest
-    if: ${{ !github.event.inputs.dry_run && !github.event.inputs.draft }}
+    if: ${{ github.event.inputs.dry_run != 'true' && github.event.inputs.draft != 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
     environment:
       name: pypi
       url: https://pypi.org/p/buildanchor
@@ -192,15 +240,15 @@ jobs:
           path: dist/
 
       - name: Publish to PyPI (via PYPI_API_TOKEN secret)
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
+        if: ${{ env.PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          password: ${{ env.PYPI_API_TOKEN }}
           packages-dir: dist/
           skip-existing: true
 
       - name: Publish to PyPI (via Trusted Publishing OIDC)
-        if: ${{ secrets.PYPI_API_TOKEN == '' }}
+        if: ${{ env.PYPI_API_TOKEN == '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
