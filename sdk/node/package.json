@@ -1,6 +1,6 @@
 {
   "name": "@tensilestream/buildanchor",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Dependency-free Node.js SDK for BuildAnchor Build Truth",
   "license": "Apache-2.0",
   "repository": {
