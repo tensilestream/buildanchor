@@ -166,6 +166,17 @@ class BuildAnchorEngineTests(unittest.TestCase):
             self.assertEqual(engine.resolve_command("test")["command"], "mvn test")
             self.assertEqual(engine.resolve_command("build")["command"], "mvn package")
 
+        # Maven subdirectory pom.xml
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sub = root / "sdk" / "java"
+            sub.mkdir(parents=True)
+            (sub / "pom.xml").write_text("<project></project>", encoding="utf-8")
+            engine = BuildAnchor(root)
+            report = engine.inspect()
+            cmd_entry = next(c for c in report.validation_commands if "mvn" in c["command"])
+            self.assertEqual(cmd_entry["command"], ["mvn", "test", "-f", "sdk/java/pom.xml"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,7 +111,14 @@ class BuildAnchor:
             if system == "maven":
                 modules.extend(self._maven_modules(matches))
                 self._maven_facts(matches, facts, evidence, dependencies)
-                maven_cmd = ["./mvnw", "test"] if (self.workspace / "mvnw").is_file() else ["mvn", "test"]
+                mvn_bin = "./mvnw" if (self.workspace / "mvnw").is_file() else "mvn"
+                if (self.workspace / "pom.xml").is_file():
+                    maven_cmd = [mvn_bin, "test"]
+                elif matches:
+                    rel_pom = str(matches[0].relative_to(self.workspace)) if matches[0].is_absolute() else str(matches[0])
+                    maven_cmd = [mvn_bin, "test", "-f", rel_pom]
+                else:
+                    maven_cmd = [mvn_bin, "test"]
                 commands.append(self._command(maven_cmd, "Maven test command", matches))
             elif system == "gradle":
                 modules.extend(self._gradle_modules(matches))
@@ -1299,7 +1306,10 @@ class BuildAnchor:
                         cmds.append(f"python -m build {m.path}")
                 elif m.ecosystem == "maven":
                     wrapper = "./mvnw" if (workspace / "mvnw").is_file() else "mvn"
-                    cmds.append(f"{wrapper} {phase} -pl {m.path}")
+                    if (workspace / "pom.xml").is_file():
+                        cmds.append(f"{wrapper} {phase} -pl {m.path}")
+                    else:
+                        cmds.append(f"{wrapper} {phase} -f {m.path}/pom.xml")
                 elif m.ecosystem == "gradle":
                     wrapper = "./gradlew" if (workspace / "gradlew").is_file() else "gradle"
                     cmds.append(f"{wrapper} :{m.name}:{phase}")

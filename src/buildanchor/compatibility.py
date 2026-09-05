@@ -284,11 +284,17 @@ def compatibility_recommendations(
             if rule["check"] == "setup_py_only" and has_setup_py and not has_pyproject:
                 recommendations.append(_simple_rec(rule, [], "python"))
             elif rule["check"] == "distutils_import":
-                hits = [p for p in py_sources if "distutils" in _read_head(p)]
+                hits = [
+                    p for p in py_sources
+                    if re.search(r"^\s*(?:import\s+distutils|from\s+distutils\b)", _read_head(p), re.MULTILINE)
+                ]
                 if hits:
                     recommendations.append(_simple_rec(rule, [str(p.relative_to(workspace)) for p in hits], "python"))
             elif rule["check"] == "pkg_resources_import":
-                hits = [p for p in py_sources if "pkg_resources" in _read_head(p)]
+                hits = [
+                    p for p in py_sources
+                    if re.search(r"^\s*(?:import\s+pkg_resources|from\s+pkg_resources\b)", _read_head(p), re.MULTILINE)
+                ]
                 if hits:
                     recommendations.append(_simple_rec(rule, [str(p.relative_to(workspace)) for p in hits], "python"))
 
