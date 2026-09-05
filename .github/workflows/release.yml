@@ -326,6 +326,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.14.0'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install latest npm for Trusted Publishing
+        run: npm install --global npm@latest
 
       - name: Verify release version and package
         env:
