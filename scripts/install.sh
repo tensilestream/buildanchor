@@ -35,11 +35,16 @@ if ! $local_install && ! $explicit_global; then
 fi
 
 repository_url="${BUILDANCHOR_SOURCE_URL:-https://github.com/tensilestream/buildanchor/archive/refs/heads/main.tar.gz}"
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repository_root="$(cd -- "${script_dir}/.." && pwd)"
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  repository_root="$(cd -- "${script_dir}/.." && pwd)"
+else
+  script_dir=""
+  repository_root=""
+fi
 is_local_checkout=false
 
-if [[ -f "${repository_root}/pyproject.toml" && -d "${repository_root}/src/buildanchor" ]]; then
+if [[ -n "${repository_root}" && -f "${repository_root}/pyproject.toml" && -d "${repository_root}/src/buildanchor" ]]; then
   is_local_checkout=true
 fi
 

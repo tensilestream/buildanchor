@@ -13,6 +13,41 @@ BuildAnchor is an open-source, local-first **Build Truth and change-validation l
 
 Every time a coding agent guesses which test command to run, which Java runtime a repo targets, or whether to use `javax.persistence` or `jakarta.persistence`, it wastes tokens and risks making an incompatible change. BuildAnchor answers those questions in milliseconds — locally, offline, and with zero LLM calls — so the agent doesn't have to.
 
+## Quick Start (Get Started in 10 Seconds)
+
+### 1. Homebrew (macOS & Linux — Recommended)
+```bash
+brew install tensilestream/tap/buildanchor
+
+# Or via explicit tap:
+brew tap tensilestream/tap
+brew install buildanchor
+```
+
+> **Note for Homebrew 6.0+**: If Homebrew prompts that third-party taps require trust, simply run:
+> ```bash
+> brew trust tensilestream/tap
+> ```
+
+### 2. uvx (Instant Run — Zero Installation)
+```bash
+uvx buildanchor inspect
+```
+
+### 3. Standalone Shell Installer (macOS & Linux)
+```bash
+curl -fsSL https://raw.githubusercontent.com/tensilestream/buildanchor/main/scripts/install.sh | bash
+```
+
+### 4. pip / pipx (Python 3.10+)
+```bash
+pipx install buildanchor
+# or
+pip install buildanchor
+```
+
+---
+
 ## How it saves LLM tokens
 
 | Without BuildAnchor | With BuildAnchor |
@@ -165,22 +200,43 @@ upstream name as its own product branding, or imply official endorsement. See
 
 ### Install the CLI
 
-For a contributor checkout, install the local files globally with the platform installer:
-
+#### Homebrew (macOS & Linux)
 ```bash
-./scripts/install.sh --local --global
+brew install tensilestream/tap/buildanchor
+
+# On Homebrew 6.0+, trust the tap if prompted:
+brew trust tensilestream/tap
 ```
 
-From macOS/Linux without a checkout:
+#### uv (Fastest)
+```bash
+uv tool install buildanchor
 
+# Or run ephemerally with zero install:
+uvx buildanchor inspect
+```
+
+#### pipx / pip (Python 3.10+)
+```bash
+pipx install buildanchor
+# or
+pip install buildanchor
+```
+
+#### Standalone Shell Installer (macOS & Linux)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tensilestream/buildanchor/main/scripts/install.sh | bash
 ```
 
-For Windows PowerShell:
-
+#### Windows PowerShell
 ```powershell
 irm https://raw.githubusercontent.com/tensilestream/buildanchor/main/scripts/install.ps1 | iex
+```
+
+For a contributor checkout, install the local files globally with the platform installer:
+
+```bash
+./scripts/install.sh --local --global
 ```
 
 ### Inspect another repository
