@@ -1,0 +1,23 @@
+{
+  "name": "polyglot-monorepo",
+  "scripts": {
+    "build": "npm run build:frontend",
+    "test": "npm run test:ui"
+  },
+  "dependencies": {
+    "react-component-1": "^1.0.0",
+    "react-component-2": "^1.0.0",
+    "react-component-3": "^1.0.0",
+    "react-component-4": "^1.0.0",
+    "react-component-5": "^1.0.0",
+    "react-component-6": "^1.0.0",
+    "react-component-7": "^1.0.0",
+    "react-component-8": "^1.0.0",
+    "react-component-9": "^1.0.0",
+    "react-component-10": "^1.0.0",
+    "react-component-11": "^1.0.0",
+    "react-component-12": "^1.0.0",
+    "react-component-13": "^1.0.0",
+    "react-component-14": "^1.0.0"
+  }
+}

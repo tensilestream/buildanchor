@@ -1,0 +1,58 @@
+{
+  "$comment": "Copyright 2026 Tensilestream and BuildAnchor contributors; SPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buildanchor.dev/schemas/v1/report.schema.json",
+  "title": "BuildAnchor Build Truth report",
+  "type": "object",
+  "required": ["schema_version", "session_id", "workspace", "workspace_digest", "status", "build_systems", "languages", "facts", "evidence"],
+  "properties": {
+    "schema_version": {"const": "v1"},
+    "session_id": {"type": "string", "minLength": 1},
+    "workspace": {"type": "string", "minLength": 1},
+    "workspace_digest": {"type": "string", "pattern": "^sha256:"},
+    "status": {"enum": ["valid", "invalid", "inconclusive", "blocked"]},
+    "build_systems": {"type": "array", "items": {"type": "string"}},
+    "languages": {"type": "array", "items": {"type": "string"}},
+    "modules": {"type": "array", "items": {"type": "string"}},
+    "facts": {"type": "array", "items": {"$ref": "#/$defs/fact"}},
+    "dependencies": {"type": "array", "items": {"type": "object"}},
+    "recommendations": {"type": "array", "items": {"type": "object"}},
+    "validation_commands": {"type": "array", "items": {"type": "object"}},
+    "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "policy": {"type": "object"},
+    "git": {
+      "type": "object",
+      "properties": {
+        "detected": {"type": "boolean"},
+        "root": {"type": "string"},
+        "head": {"type": ["string", "null"]},
+        "baseline_capable": {"type": "boolean"}
+      }
+    }
+  },
+  "$defs": {
+    "fact": {
+      "type": "object",
+      "required": ["key", "value", "status", "evidence_ids"],
+      "properties": {
+        "key": {"type": "string"},
+        "value": {},
+        "status": {"enum": ["proven", "inferred", "unknown", "blocked"]},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        "detail": {"type": "string"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["id", "kind", "path", "digest", "detail"],
+      "properties": {
+        "id": {"type": "string"},
+        "kind": {"type": "string"},
+        "path": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^sha256:"},
+        "detail": {"type": "string"}
+      }
+    }
+  }
+}

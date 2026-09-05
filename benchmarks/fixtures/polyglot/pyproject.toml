@@ -1,0 +1,9 @@
+[project]
+name = "polyglot-backend"
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.5",
+]
+[tool.pytest.ini_options]

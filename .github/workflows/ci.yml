@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Sync project environment
+        run: uv sync --locked
+      - name: Compile Python sources
+        run: uv run python -m compileall -q src tests
+      - name: Run tests
+        run: uv run python -m unittest discover -s tests -v
+      - name: Run benchmark smoke test
+        run: uv run python benchmarks/benchmark_cli.py --iterations 3 --warmups 1 --format json
+      - name: Smoke test global editable install against the checkout
+        run: |
+          tool_root="${RUNNER_TEMP}/buildanchor-tool"
+          mkdir -p "${tool_root}"
+          UV_TOOL_DIR="${tool_root}/tools" \
+            UV_TOOL_BIN_DIR="${tool_root}/bin" \
+            uv tool install --editable . --force
+          echo "${tool_root}/bin" >> "${GITHUB_PATH}"
+          buildanchor inspect --workspace "${GITHUB_WORKSPACE}" --format json > "${RUNNER_TEMP}/buildanchor-report.json"
+
+  java-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile Java SDK
+        run: mkdir -p /tmp/buildanchor-java-classes && javac --release 17 -d /tmp/buildanchor-java-classes sdk/java/src/main/java/com/buildanchor/*.java

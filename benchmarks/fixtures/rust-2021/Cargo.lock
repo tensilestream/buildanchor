@@ -1,0 +1,114 @@
+version = 3
+
+[[package]]
+name = "rust-service"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tokio",
+]
+
+[[package]]
+name = "serde"
+version = "1.0.198"
+
+[[package]]
+name = "tokio"
+version = "1.37.0"
+
+[[package]]
+name = 'crate-1'
+version = '1.1.0'
+
+[[package]]
+name = 'crate-2'
+version = '1.2.0'
+
+[[package]]
+name = 'crate-3'
+version = '1.3.0'
+
+[[package]]
+name = 'crate-4'
+version = '1.4.0'
+
+[[package]]
+name = 'crate-5'
+version = '1.5.0'
+
+[[package]]
+name = 'crate-6'
+version = '1.6.0'
+
+[[package]]
+name = 'crate-7'
+version = '1.7.0'
+
+[[package]]
+name = 'crate-8'
+version = '1.8.0'
+
+[[package]]
+name = 'crate-9'
+version = '1.9.0'
+
+[[package]]
+name = 'crate-10'
+version = '1.10.0'
+
+[[package]]
+name = 'crate-11'
+version = '1.11.0'
+
+[[package]]
+name = 'crate-12'
+version = '1.12.0'
+
+[[package]]
+name = 'crate-13'
+version = '1.13.0'
+
+[[package]]
+name = 'crate-14'
+version = '1.14.0'
+
+[[package]]
+name = 'crate-15'
+version = '1.15.0'
+
+[[package]]
+name = 'crate-16'
+version = '1.16.0'
+
+[[package]]
+name = 'crate-17'
+version = '1.17.0'
+
+[[package]]
+name = 'crate-18'
+version = '1.18.0'
+
+[[package]]
+name = 'crate-19'
+version = '1.19.0'
+
+[[package]]
+name = 'crate-20'
+version = '1.20.0'
+
+[[package]]
+name = 'crate-21'
+version = '1.21.0'
+
+[[package]]
+name = 'crate-22'
+version = '1.22.0'
+
+[[package]]
+name = 'crate-23'
+version = '1.23.0'
+
+[[package]]
+name = 'crate-24'
+version = '1.24.0'
+

@@ -1,0 +1,16 @@
+- id: buildanchor-validate
+  name: BuildAnchor Validate Change
+  description: Validates repository Build Truth and change compatibility before commit
+  entry: buildanchor validate-change --baseline HEAD --execute
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit, pre-push]
+
+- id: buildanchor-inspect
+  name: BuildAnchor Inspect
+  description: Verifies repository Build Truth facts and reports detected constraints
+  entry: buildanchor inspect --format text
+  language: python
+  pass_filenames: false
+  always_run: true

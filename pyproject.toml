@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "buildanchor"
+version = "0.2.0"
+description = "Local-first Build Truth and change validation for AI coding agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Tensilestream & BuildAnchor contributors" }]
+keywords = [
+    "ai-agents",
+    "ai-coding-assistant",
+    "build-system",
+    "build-validation",
+    "change-validation",
+    "code-intelligence",
+    "developer-productivity",
+    "developer-tools",
+    "local-first",
+    "mcp",
+    "polyglot-repository",
+    "repository-analysis",
+    "software-supply-chain",
+    "verification",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.optional-dependencies]
+tokens = ["tiktoken>=0.7"]
+dev = ["tiktoken>=0.7"]
+
+[project.urls]
+Homepage = "https://github.com/tensilestream/buildanchor"
+Documentation = "https://github.com/tensilestream/buildanchor#readme"
+Repository = "https://github.com/tensilestream/buildanchor.git"
+Issues = "https://github.com/tensilestream/buildanchor/issues"
+Discussions = "https://github.com/tensilestream/buildanchor/discussions"
+Changelog = "https://github.com/tensilestream/buildanchor/blob/main/CHANGELOG.md"
+
+[project.scripts]
+buildanchor = "buildanchor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+target/
+*.class
+*.jar
+*.war
+.uv/
+.buildanchor-uv/
+.DS_Store
+.coverage
+coverage.xml
+.idea/
+.vscode/
+
+# Internal organization strategy & local review (do not publish)
+docs/ORGANIZATION_AND_SCALE_PLAN.md
+PRE_PUSH_AUDIT.md
+*.local.md

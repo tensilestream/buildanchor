@@ -1,0 +1,146 @@
+version = 1
+requires-python = '>=3.11'
+[[package]]
+name = 'pack-1'
+version = '1.1.0'
+sdist = {}
+
+[[package]]
+name = 'pack-2'
+version = '1.2.0'
+sdist = {}
+
+[[package]]
+name = 'pack-3'
+version = '1.3.0'
+sdist = {}
+
+[[package]]
+name = 'pack-4'
+version = '1.4.0'
+sdist = {}
+
+[[package]]
+name = 'pack-5'
+version = '1.5.0'
+sdist = {}
+
+[[package]]
+name = 'pack-6'
+version = '1.6.0'
+sdist = {}
+
+[[package]]
+name = 'pack-7'
+version = '1.7.0'
+sdist = {}
+
+[[package]]
+name = 'pack-8'
+version = '1.8.0'
+sdist = {}
+
+[[package]]
+name = 'pack-9'
+version = '1.9.0'
+sdist = {}
+
+[[package]]
+name = 'pack-10'
+version = '1.10.0'
+sdist = {}
+
+[[package]]
+name = 'pack-11'
+version = '1.11.0'
+sdist = {}
+
+[[package]]
+name = 'pack-12'
+version = '1.12.0'
+sdist = {}
+
+[[package]]
+name = 'pack-13'
+version = '1.13.0'
+sdist = {}
+
+[[package]]
+name = 'pack-14'
+version = '1.14.0'
+sdist = {}
+
+[[package]]
+name = 'pack-15'
+version = '1.15.0'
+sdist = {}
+
+[[package]]
+name = 'pack-16'
+version = '1.16.0'
+sdist = {}
+
+[[package]]
+name = 'pack-17'
+version = '1.17.0'
+sdist = {}
+
+[[package]]
+name = 'pack-18'
+version = '1.18.0'
+sdist = {}
+
+[[package]]
+name = 'pack-19'
+version = '1.19.0'
+sdist = {}
+
+[[package]]
+name = 'pack-20'
+version = '1.20.0'
+sdist = {}
+
+[[package]]
+name = 'pack-21'
+version = '1.21.0'
+sdist = {}
+
+[[package]]
+name = 'pack-22'
+version = '1.22.0'
+sdist = {}
+
+[[package]]
+name = 'pack-23'
+version = '1.23.0'
+sdist = {}
+
+[[package]]
+name = 'pack-24'
+version = '1.24.0'
+sdist = {}
+
+[[package]]
+name = 'pack-25'
+version = '1.25.0'
+sdist = {}
+
+[[package]]
+name = 'pack-26'
+version = '1.26.0'
+sdist = {}
+
+[[package]]
+name = 'pack-27'
+version = '1.27.0'
+sdist = {}
+
+[[package]]
+name = 'pack-28'
+version = '1.28.0'
+sdist = {}
+
+[[package]]
+name = 'pack-29'
+version = '1.29.0'
+sdist = {}
