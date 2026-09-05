@@ -37,7 +37,7 @@ jobs:
             UV_TOOL_BIN_DIR="${tool_root}/bin" \
             uv tool install --editable . --force
           echo "${tool_root}/bin" >> "${GITHUB_PATH}"
-          buildanchor inspect --workspace "${GITHUB_WORKSPACE}" --format json > "${RUNNER_TEMP}/buildanchor-report.json"
+          "${tool_root}/bin/buildanchor" inspect --workspace "${GITHUB_WORKSPACE}" --format json > "${RUNNER_TEMP}/buildanchor-report.json"
 
   java-sdk:
     runs-on: ubuntu-latest
