@@ -62,6 +62,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Node.js (for Node SDK validation)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+
       - name: Sync dependencies
         run: uv sync --locked
 
@@ -72,6 +77,12 @@ jobs:
         run: |
           mkdir -p /tmp/buildanchor-java-classes
           javac --release 17 -d /tmp/buildanchor-java-classes sdk/java/src/main/java/com/buildanchor/*.java
+
+      - name: Test Node SDK
+        run: npm --prefix sdk/node test
+
+      - name: Verify Node package contents
+        run: npm pack --dry-run ./sdk/node
 
       - name: Run benchmark smoke test
         run: uv run python benchmarks/benchmark_cli.py --iterations 3 --warmups 1 --format json
@@ -101,6 +112,11 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+
       - name: Resolve Release Tag & Version
         id: resolve_tag
         env:
@@ -108,6 +124,25 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           PROJECT_VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml', 'rb'); print(tomllib.load(f)['project']['version'])")
+          NODE_VERSION=$(node -p "require('./sdk/node/package.json').version")
+          NODE_PACKAGE=$(node -p "require('./sdk/node/package.json').name")
+          JAVA_VERSION=$(python3 -c "import xml.etree.ElementTree as e; print(e.parse('sdk/java/pom.xml').getroot().find('{http://maven.apache.org/POM/4.0.0}version').text)")
+          JAVA_GROUP=$(python3 -c "import xml.etree.ElementTree as e; print(e.parse('sdk/java/pom.xml').getroot().find('{http://maven.apache.org/POM/4.0.0}groupId').text)")
+
+          if [ "${NODE_VERSION}" != "${PROJECT_VERSION}" ]; then
+            echo "Node SDK version ${NODE_VERSION} must match pyproject.toml version ${PROJECT_VERSION}." >&2
+            exit 1
+          fi
+
+          if [ "${JAVA_VERSION}" != "${PROJECT_VERSION}" ]; then
+            echo "Java SDK version ${JAVA_VERSION} must match pyproject.toml version ${PROJECT_VERSION}." >&2
+            exit 1
+          fi
+
+          if [ "${NODE_PACKAGE}" != "@tensilestream/buildanchor" ] || [ "${JAVA_GROUP}" != "io.github.tensilestream" ]; then
+            echo "SDK package identities must use the Tensilestream organization namespaces." >&2
+            exit 1
+          fi
 
           if [ -n "${DISPATCH_TAG_NAME}" ]; then
             TAG="${DISPATCH_TAG_NAME}"
@@ -155,6 +190,10 @@ jobs:
 
       - name: Build sdist and wheel
         run: uv build
+
+      - name: Validate Node package for publication
+        run: |
+          npm pack --dry-run ./sdk/node
 
       - name: Generate SHA256 Checksums
         run: |
@@ -268,9 +307,44 @@ jobs:
           packages-dir: dist/
           skip-existing: true
 
+  publish-npm:
+    name: Publish Node SDK to npm
+    needs: [build, github-release]
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.dry_run != 'true' && github.event.inputs.draft != 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@tensilestream/buildanchor
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js and npm registry
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Use npm version required for trusted publishing
+        run: npm install --global npm@11.5.1
+
+      - name: Verify release version and package
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          test "$(node -p "require('./sdk/node/package.json').version")" = "${RELEASE_VERSION}"
+          npm pack --dry-run ./sdk/node
+
+      - name: Publish public package with npm trusted publishing
+        run: npm publish ./sdk/node
+
   post-release:
     name: Auto-Bump Next Version
-    needs: [build, github-release, publish-pypi]
+    needs: [build, github-release, publish-pypi, publish-npm]
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.dry_run != 'true' && github.event.inputs.draft != 'true' }}
     permissions:
@@ -298,7 +372,6 @@ jobs:
           NEXT_VERSION=$(python3 -c "import tomllib; f=open('pyproject.toml', 'rb'); print(tomllib.load(f)['project']['version'])")
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml uv.lock sdk/java/pom.xml Formula/buildanchor.rb
+          git add pyproject.toml uv.lock sdk/node/package.json sdk/java/pom.xml Formula/buildanchor.rb
           git commit -m "chore(release): prepare next version v${NEXT_VERSION} [skip ci]"
           git push origin main || echo "Version bump push skipped (branch up to date or protected)."
-

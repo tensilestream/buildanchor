@@ -119,21 +119,34 @@ ollama run deepseek-coder:6.7b "$PROMPT\n\nImplement the objective."
 
 ---
 
-## 4. MCP Server Setup (Claude Desktop & Continue.dev)
+## 4. MCP Server Setup
 
 BuildAnchor exposes **13 MCP tools** over standard JSON-RPC Stdio.
 
-### Configuration (`claude_desktop_config.json`)
+Use the guided installer to choose only the clients you use:
+
+```bash
+buildanchor setup-mcp --workspace . --interactive
+```
+
+Choose **Claude Code (repository)** to write `.mcp.json` in the repository. Choose
+**Claude Desktop (global)** only when you want the desktop app to use BuildAnchor
+for this workspace from your user-level Claude Desktop configuration.
+
+### Claude Code repository configuration (`.mcp.json`)
 ```json
 {
   "mcpServers": {
     "buildanchor": {
-      "command": "uvx",
-      "args": ["buildanchor", "mcp", "--workspace", "/absolute/path/to/your/repo"]
+      "command": "buildanchor",
+      "args": ["mcp", "--stdio", "--allow-root", "/absolute/path/to/your/repo"]
     }
   }
 }
 ```
+
+Claude Desktop uses the same `mcpServers` entry, but its configuration file is
+user-level (`claude_desktop_config.json`) rather than part of the repository.
 
 ### Available MCP Tools:
 - `build.llm_prompt` — Call first before acting; compact prompt block (~80–250 tokens).

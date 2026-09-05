@@ -5,6 +5,7 @@
 ## Validation
 
 - [ ] Python tests pass
+- [ ] Node.js SDK tests pass, if applicable
 - [ ] Java SDK compiles, if applicable
 - [ ] Documentation updated, if applicable
 - [ ] Fixtures added or updated, if an adapter changed

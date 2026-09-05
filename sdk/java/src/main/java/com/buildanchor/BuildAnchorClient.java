@@ -43,7 +43,7 @@ public final class BuildAnchorClient implements AutoCloseable {
 
     public BuildAnchorResponse preflight(String objective, int tokenBudget) throws IOException, InterruptedException {
         String body = "{\"objective\":" + quote(objective) + ",\"token_budget\":" + tokenBudget + "}";
-        return call("preflight", body, "/v1/preflight", "preflight", "--token-budget", Integer.toString(tokenBudget));
+        return call("preflight", body, "/v1/preflight", "preflight", "--objective", objective, "--token-budget", Integer.toString(tokenBudget));
     }
 
     public BuildAnchorResponse plan(String objective, int tokenBudget) throws IOException, InterruptedException {
@@ -52,11 +52,24 @@ public final class BuildAnchorClient implements AutoCloseable {
     }
 
     public BuildAnchorResponse changeImpact(String baseline) throws IOException, InterruptedException {
-        return call("change-impact", jsonString("baseline", baseline), "/v1/change-impact", "change-impact", "--baseline", baseline);
+        return changeImpact(baseline, false);
+    }
+
+    public BuildAnchorResponse changeImpact(String baseline, boolean staged) throws IOException, InterruptedException {
+        String body = "{\"baseline\":" + quote(baseline) + ",\"staged\":" + staged + "}";
+        return call("change-impact", body, "/v1/change-impact", appendStaged(new String[]{"change-impact", "--baseline", baseline}, staged));
     }
 
     public BuildAnchorResponse validateChange(String baseline) throws IOException, InterruptedException {
-        return call("validate-change", jsonString("baseline", baseline), "/v1/validate-change", "validate-change", "--baseline", baseline);
+        return validateChange(baseline, false, 300, false);
+    }
+
+    public BuildAnchorResponse validateChange(String baseline, boolean execute, int timeoutSeconds, boolean staged) throws IOException, InterruptedException {
+        String body = "{\"baseline\":" + quote(baseline) + ",\"execute\":" + execute
+                + ",\"timeout\":" + timeoutSeconds + ",\"staged\":" + staged + "}";
+        String[] args = {"validate-change", "--baseline", baseline, "--timeout", Integer.toString(timeoutSeconds)};
+        if (execute) args = append(args, "--execute");
+        return call("validate-change", body, "/v1/validate-change", appendStaged(args, staged));
     }
 
     public CompletableFuture<BuildAnchorResponse> validateChangeAsync(String baseline) {
@@ -102,7 +115,7 @@ public final class BuildAnchorClient implements AutoCloseable {
     private HttpRequest request(String path, String body) {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(endpoint + path))
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body));
+                .POST(HttpRequest.BodyPublishers.ofString(withWorkspace(body)));
         if (token != null) {
             request.header("Authorization", "Bearer " + token);
         }
@@ -115,8 +128,30 @@ public final class BuildAnchorClient implements AutoCloseable {
     }
 
     private static String quote(String value) {
-        String escaped = value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
+        String escaped = value.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\b", "\\b")
+                .replace("\f", "\\f")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
         return "\"" + escaped + "\"";
+    }
+
+    private String withWorkspace(String body) {
+        String workspaceField = "\"workspace\":" + quote(workspace.toString());
+        return "{}".equals(body) ? "{" + workspaceField + "}" : "{" + workspaceField + "," + body.substring(1);
+    }
+
+    private static String[] appendStaged(String[] values, boolean staged) {
+        return staged ? append(values, "--staged") : values;
+    }
+
+    private static String[] append(String[] values, String value) {
+        String[] result = new String[values.length + 1];
+        System.arraycopy(values, 0, result, 0, values.length);
+        result[values.length] = value;
+        return result;
     }
 
     @Override

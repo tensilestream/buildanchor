@@ -49,3 +49,21 @@ jobs:
           java-version: '17'
       - name: Compile Java SDK
         run: mkdir -p /tmp/buildanchor-java-classes && javac --release 17 -d /tmp/buildanchor-java-classes sdk/java/src/main/java/com/buildanchor/*.java
+
+  node-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+      - name: Sync BuildAnchor for local SDK integration tests
+        run: uv sync --locked
+      - name: Test Node SDK
+        run: npm --prefix sdk/node test
+      - name: Verify Node package contents
+        run: npm pack --dry-run ./sdk/node

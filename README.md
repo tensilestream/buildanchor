@@ -350,6 +350,40 @@ piping it to a shell in a restricted environment. Set `BUILDANCHOR_SOURCE_URL` t
 pinned release archive or an internal mirror. The Homebrew formula is intended for a published
 tap, not for pre-push local testing.
 
+## Interactive CLI workflows
+
+Add `--interactive` (or `-i`) to use BuildAnchor as a guided terminal workflow rather than
+memorising flags. Interactive mode displays the workspace, explains each requested value, accepts
+defaults with Enter, and lets you cancel safely with `q`.
+
+```bash
+# Instead of an error for a missing objective, BuildAnchor asks for one.
+buildanchor plan -i
+
+# The same guided flow is available for commands with other inputs.
+buildanchor find --interactive
+buildanchor cmd -i
+buildanchor validate-change -i
+```
+
+| Command | Interactive inputs |
+| --- | --- |
+| `plan` | Required objective |
+| `preflight`, `llm-prompt` | Optional objective |
+| `find` | Required package name |
+| `explain-dependency` | Required dependency or coordinate |
+| `cmd` | Build phase, optional scope, changed-modules choice |
+| `context` | Token budget |
+| `change-impact` | Baseline and staged-only choice |
+| `validate-change` | Baseline, staged-only choice, and explicit probe-execution choice |
+| `serve` | Listen address |
+| `inspect`, `token-estimate`, `repair`, `compatibility`, `modules`, `init`, `setup-copilot` | Confirms workspace defaults before running |
+| `setup-mcp` | Keyboard selector: Up/Down to move, Space to select, Enter to install |
+
+Interactive mode requires an attached terminal and plain text output. It is intentionally disabled
+for `mcp` (a JSON-RPC stdio server), `--format json`, `--format llm`, `--agent`, CI, and piped
+execution so that automation and protocol consumers always receive clean machine-readable output.
+
 ## Agent integration
 
 Start the MCP server with a bounded workspace:
@@ -357,6 +391,40 @@ Start the MCP server with a bounded workspace:
 ```bash
 buildanchor mcp --stdio --allow-root /path/to/repository
 ```
+
+For GitHub Copilot in VS Code, create or update the workspace MCP configuration automatically:
+
+```bash
+buildanchor setup-copilot --workspace .
+```
+
+This adds the local BuildAnchor server to `.vscode/mcp.json` without removing other configured servers. Use `--force` only to replace an existing `buildanchor` entry.
+
+Configure several local coding agents in one command:
+
+```bash
+buildanchor setup-mcp --workspace . --clients copilot,cursor,claude-code,codex
+# Or configure every supported client:
+buildanchor setup-mcp --workspace . --clients all
+```
+
+For an interactive terminal selector:
+
+```bash
+buildanchor setup-mcp --workspace . --interactive
+```
+
+Use the Up/Down arrow keys to move, Space to toggle a client, and Enter to install the selected clients. In a non-interactive terminal or CI pipe, BuildAnchor falls back to the numbered prompt.
+
+The selector explicitly distinguishes client scope:
+
+- `copilot` writes workspace `.vscode/mcp.json`.
+- `cursor` writes workspace `.cursor/mcp.json`.
+- `claude-code` writes workspace `.mcp.json`.
+- `claude-desktop` writes the user-level Claude Desktop configuration.
+- `codex` writes user-level `~/.codex/config.toml`.
+
+Use `claude-code` for repository setup; `claude-desktop` is available only when an app-wide Claude Desktop installation is intended. `claude` remains an alias for `claude-code`, and `gpt` is an alias for `codex`.
 
 Available MCP tools:
 
@@ -388,22 +456,58 @@ curl -X POST http://127.0.0.1:8787/v1/inspect \
 
 ## Python SDK
 
+Full API reference: [Python SDK guide](docs/sdk/python.md).
+
 ```python
 from buildanchor import BuildAnchorClient
 
 client = BuildAnchorClient(workspace=".")
-baseline = client.inspect()
-result = client.validate_change()
+context = client.llm_prompt("Add rate limiting")["content"]
+preflight = client.preflight("Add rate limiting")
+result = client.validate_change()  # Static and non-executing by default.
 ```
 
-Use `AsyncBuildAnchorClient` for asynchronous orchestration or set `endpoint="http://127.0.0.1:8787"` for a remote HTTP server. See [`sdk/python/README.md`](sdk/python/README.md).
+Use `AsyncBuildAnchorClient` for asynchronous orchestration. For a bounded remote server, set
+`endpoint="http://127.0.0.1:8787"`; the SDK sends the requested workspace on every call and the
+server rejects paths outside its allowed root. See the complete agent workflow, safety contract,
+and API reference in [`sdk/python/README.md`](sdk/python/README.md).
+
+## Node.js SDK
+
+Full API reference: [Node.js SDK guide](docs/sdk/node.md).
+
+```js
+import { BuildAnchorClient } from "@tensilestream/buildanchor";
+
+const client = new BuildAnchorClient({ workspace: "." });
+const context = await client.llmPrompt("Add rate limiting");
+const preflight = await client.preflight({ objective: "Add rate limiting" });
+const result = await client.validateChange(); // Static and non-executing by default.
+```
+
+The dependency-free Node.js SDK supports local CLI and bounded HTTP modes with the same v1
+response contract. See [`sdk/node/README.md`](sdk/node/README.md) for its full agent workflow,
+typed API, error model, and publishing checks.
+
+### Distribution identities
+
+| Ecosystem | Package identity |
+| --- | --- |
+| PyPI | `buildanchor` |
+| npm | `@tensilestream/buildanchor` |
+| Maven | `io.github.tensilestream:buildanchor-sdk` |
+
+These names use each registry's native namespace convention while identifying
+the same Tensilestream-maintained BuildAnchor product.
 
 ## Java SDK
+
+Full API reference: [Java SDK guide](docs/sdk/java.md).
 
 Maven coordinates:
 
 ```text
-com.buildanchor:buildanchor-sdk:0.1.0
+io.github.tensilestream:buildanchor-sdk:1.0.0
 ```
 
 ```java
@@ -415,7 +519,7 @@ try (BuildAnchorClient client = BuildAnchorClient.builder()
 }
 ```
 
-See [`sdk/java/README.md`](sdk/java/README.md).
+See [`sdk/java/README.md`](sdk/java/README.md) for the package-level overview.
 
 ## GitHub and agent integration
 

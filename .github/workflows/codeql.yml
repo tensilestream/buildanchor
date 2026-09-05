@@ -23,6 +23,8 @@ jobs:
             build-mode: none
           - language: java-kotlin
             build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
     steps:
       - uses: actions/checkout@v4
       - if: matrix.build-mode == 'manual'
