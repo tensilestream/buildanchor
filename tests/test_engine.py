@@ -177,6 +177,17 @@ class BuildAnchorEngineTests(unittest.TestCase):
             cmd_entry = next(c for c in report.validation_commands if "mvn" in c["command"])
             self.assertEqual(cmd_entry["command"], ["mvn", "test", "-f", "sdk/java/pom.xml"])
 
+        # Node subdirectory package: command must execute in that package, not
+        # incorrectly search for a root package.json.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sub = root / "sdk" / "node"
+            sub.mkdir(parents=True)
+            (sub / "package.json").write_text(json.dumps({"scripts": {"test": "node --test"}}), encoding="utf-8")
+            report = BuildAnchor(root).inspect()
+            cmd_entry = next(c for c in report.validation_commands if c["command"][0] == "npm")
+            self.assertEqual(cmd_entry["command"], ["npm", "--prefix", "sdk/node", "test"])
+
 
 if __name__ == "__main__":
     unittest.main()

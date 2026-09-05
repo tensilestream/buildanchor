@@ -36,9 +36,11 @@ class NodeAdapter:
             scripts = json.loads(text).get("scripts", {})
         except json.JSONDecodeError:
             return []
+        relative_directory = path.parent.relative_to(engine.workspace)
+        prefix = [] if relative_directory == Path(".") else ["--prefix", str(relative_directory)]
         if "test" in scripts:
-            return [engine._command(["npm", "test"], "package.json test script", [path])]
-        return [engine._command(["npm", "run", "build"], "package.json build script", [path])] if "build" in scripts else []
+            return [engine._command(["npm", *prefix, "test"], "package.json test script", [path])]
+        return [engine._command(["npm", *prefix, "run", "build"], "package.json build script", [path])] if "build" in scripts else []
 
     def find_package(self, engine: Any, name: str, show_usage: bool) -> list[dict]:
         module_path = engine.workspace / "node_modules" / name

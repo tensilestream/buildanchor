@@ -23,6 +23,15 @@ from buildanchor.cli import (
 
 
 class CLITests(unittest.TestCase):
+    @staticmethod
+    def _set_pty_size(descriptor: int, rows: int = 40, columns: int = 120) -> None:
+        """Give PTY integration tests a stable, readable terminal viewport."""
+        import fcntl
+        import struct
+        import termios
+
+        fcntl.ioctl(descriptor, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+
     def test_interactive_plan_collects_a_required_objective_before_execution(self) -> None:
         class TTYInput(io.StringIO):
             def isatty(self) -> bool:
@@ -258,6 +267,7 @@ class CLITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
             master, slave = pty.openpty()
+            self._set_pty_size(slave)
             process = subprocess.Popen(
                 [sys.executable, "-m", "buildanchor", "setup-mcp", "--workspace", str(workspace), "--interactive"],
                 stdin=slave,
@@ -301,6 +311,7 @@ class CLITests(unittest.TestCase):
             workspace = Path(directory)
             (workspace / "package.json").write_text('{"name":"sample"}\n', encoding="utf-8")
             master, slave = pty.openpty()
+            self._set_pty_size(slave)
             process = subprocess.Popen(
                 [sys.executable, "-m", "buildanchor", "plan", "-i", "--workspace", str(workspace)],
                 stdin=slave,
