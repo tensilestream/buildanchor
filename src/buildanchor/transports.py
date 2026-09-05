@@ -266,6 +266,64 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "get_build_truth",
+        "description": (
+            "Returns a compact (<= 400 token) authoritative build truth summary for the repository. "
+            "Covers build system, runtime versions, compatibility constraints, and verified validation commands. "
+            "Inject this first before modifying code or running builds."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Path to the repository root."},
+                "objective": {"type": "string", "description": "What you are about to do (used for mismatch detection)."},
+            },
+        },
+    },
+    {
+        "name": "find_package",
+        "description": (
+            "Search for a package across detected ecosystems (Node, Python, Java/Maven, Go, Rust). "
+            "Returns installed version, declared version, import patterns, and guidance."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["package"],
+            "properties": {
+                "workspace": {"type": "string", "description": "Path to the repository root."},
+                "package": {"type": "string", "description": "Package name to search for."},
+                "show_usage": {"type": "boolean", "description": "Scan source files for import patterns. Default: true."},
+                "installed_only": {"type": "boolean", "description": "Only return results if installed. Default: false."},
+            },
+        },
+    },
+    {
+        "name": "get_test_command",
+        "description": (
+            "Resolve verified test command with optional monorepo scoping ('ui', 'backend', or specific package) "
+            "and git-diff change detection."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Path to the repository root."},
+                "phase": {
+                    "type": "string",
+                    "description": "Phase to resolve: 'test', 'build', 'lint', 'format', or 'clean'. Default: 'test'.",
+                    "enum": ["test", "build", "lint", "format", "clean"],
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Target category ('ui', 'backend', 'shared') or specific package name/path in monorepos.",
+                },
+                "changed": {
+                    "type": "boolean",
+                    "description": "Target only packages containing modified files according to git diff.",
+                },
+            },
+        },
+    },
 ]
 
 # MCP prompts — injectable templates surfaced to Claude Desktop / Cursor / Continue.dev
@@ -277,8 +335,16 @@ PROMPTS = [
             {"name": "workspace", "description": "Path to the repository root.", "required": False},
             {"name": "objective", "description": "What you are about to do.", "required": False},
         ],
-    },
+    }
 ]
+
+
+def _mcp_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("buildanchor")
+    except Exception:
+        return "1.1.5"
 
 
 def _json_response(value: Any) -> str:
@@ -317,14 +383,19 @@ class MCPServer:
                     "capabilities": {
                         "tools": {"listChanged": False},
                         "prompts": {"listChanged": False},
+                        "resources": {"listChanged": False},
                     },
-                    "serverInfo": {"name": "buildanchor", "version": "0.2.0"},
+                    "serverInfo": {"name": "buildanchor", "version": _mcp_version()},
                 },
             }
         if method == "tools/list":
             return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": TOOLS}}
         if method == "prompts/list":
             return {"jsonrpc": "2.0", "id": request_id, "result": {"prompts": PROMPTS}}
+        if method == "resources/list":
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"resources": []}}
+        if method == "resources/templates/list":
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"resourceTemplates": []}}
         if method == "prompts/get":
             params = request.get("params", {})
             name = params.get("name", "")
@@ -355,7 +426,7 @@ class MCPServer:
         if freshness not in {"cached", "refresh"}:
             raise BuildAnchorError("freshness must be 'cached' or 'refresh'")
         report = engine.inspect() if freshness == "refresh" else engine._inspect_cached()
-        if name == "build.llm_prompt":
+        if name in {"build.llm_prompt", "get_build_truth"}:
             block = engine.llm_prompt(str(arguments.get("objective", "")))
             return block.to_dict()
         if name == "build.token_estimate":
@@ -397,7 +468,7 @@ class MCPServer:
             needle = str(arguments.get("dependency", "")).lower()
             matches = [item for item in report.dependencies if needle in str(item.get("coordinate", "")).lower()]
             return {"schema_version": "v1", "session_id": report.session_id, "dependency": arguments.get("dependency"), "matches": matches, "status": "proven" if matches else "unknown"}
-        if name == "build.find_package":
+        if name in {"build.find_package", "find_package"}:
             pkg = str(arguments.get("package", ""))
             show_usage = bool(arguments.get("show_usage", True))
             installed_only = bool(arguments.get("installed_only", False))
@@ -410,7 +481,7 @@ class MCPServer:
                 "is_monorepo": len(modules) > 1 or (len(modules) == 1 and modules[0].path != "."),
                 "modules": [m.to_dict() for m in modules],
             }
-        if name == "build.cmd":
+        if name in {"build.cmd", "get_test_command"}:
             phase = str(arguments.get("phase", "test"))
             scope = arguments.get("scope")
             changed = bool(arguments.get("changed", False))
