@@ -454,6 +454,37 @@ To connect an agent through MCP, point it at a bounded checkout:
 
 The first MVP detects Maven, Gradle, Node, Python, Go, Rust, .NET, and generic build markers such as Make, CMake, Bazel, Swift Package Manager, Composer, Bundler, and pub. Static inspection is always explicit about unsupported, unavailable, and policy-blocked capabilities. Validation is intentionally two-stage: static Git/change analysis first, then explicit probe execution when the caller opts in.
 
+## Frequently Asked Questions (FAQ)
+
+### What is BuildAnchor?
+BuildAnchor is an open-source, local-first Build Truth and change-validation layer for AI coding assistants and autonomous agents. It deterministically proves repository build facts, runtime environments, dependency compatibility, and test command scopes in milliseconds with zero LLM overhead.
+
+### How does BuildAnchor stop AI coding agents from breaking builds?
+Coding agents (such as Claude Code, Cursor, Copilot Workspace, Devin, and Aider) typically inspect a codebase by reading multiple configuration files (`pom.xml`, `package.json`, `build.gradle`, `Cargo.toml`), frequently hallucinating wrong test commands or deprecated runtime APIs (e.g., mixing `javax.*` with `jakarta.*` in Spring Boot 3+). BuildAnchor deterministically inspects the repository offline in milliseconds, proving the exact build facts and test command scopes before and after code edits.
+
+### How does BuildAnchor save LLM tokens?
+Instead of forcing an agent to ingest thousands of tokens of verbose configuration files and dependency graphs, BuildAnchor injects a compact, ~150-token authoritative context pack (`build.llm_prompt`). This saves between 500 and 2,000 tokens on every agent turn, reducing latency and API costs.
+
+### Does BuildAnchor support monorepos?
+Yes. BuildAnchor features automatic monorepo topology discovery across 8 major ecosystems (pnpm, Cargo workspaces, Gradle multi-project, Maven multi-module, Nx, Turborepo, Go multi-module, and npm/yarn workspaces). It semantically categorizes packages into `ui`, `backend`, and `shared`, enabling agents to invoke targeted scoped tests (e.g., `buildanchor cmd --scope ui` or `--changed HEAD~1`) without running the entire repository test suite.
+
+### How do I connect BuildAnchor to Claude Code, Cursor, or other MCP agents?
+BuildAnchor provides a built-in Model Context Protocol (MCP) server. You can connect any MCP-compatible agent by adding BuildAnchor to your agent's MCP configuration:
+```json
+{
+  "mcpServers": {
+    "buildanchor": {
+      "command": "buildanchor",
+      "args": ["mcp", "--stdio", "--allow-root", "/path/to/repository"]
+    }
+  }
+}
+```
+This gives your agent instant access to tools like `build.inspect`, `build.context`, `build.validate_change`, and `build.modules`.
+
+### Is BuildAnchor offline-capable and secure?
+Yes. BuildAnchor is read-only, local-first, and completely offline by default. It executes zero external LLM API calls, redacts sensitive tokens and secrets, uses strictly bounded probes, and never sends your proprietary source code to external servers.
+
 ## Security model
 
 BuildAnchor is read-only and offline-capable by default. It contains workspace paths, uses fixed probe names, does not accept raw agent commands, limits output and execution, redacts credential-bearing values, and records evidence digests. Live resolution and validation should run only through an enterprise-approved sandbox and policy.
