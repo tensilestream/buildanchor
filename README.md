@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/branding/buildanchor_project_shield.png" width="120" alt="BuildAnchor Logo">
+</p>
+ 
 # BuildAnchor
 
 [![CI](https://github.com/tensilestream/buildanchor/actions/workflows/ci.yml/badge.svg)](https://github.com/tensilestream/buildanchor/actions/workflows/ci.yml)
