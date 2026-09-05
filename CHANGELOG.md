@@ -2,6 +2,12 @@
 
 All notable changes to BuildAnchor are documented here.
 
+## [0.3.2] - 2026-09-05
+
+### Fixed
+
+- PyPI publishing now uploads only Python distribution archives; `SHA256SUMS.txt` remains a GitHub Release asset.
+
 ## [0.3.1] - 2026-09-05
 
 ### Added

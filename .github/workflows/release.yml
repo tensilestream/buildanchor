@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Tag name to release (e.g., v0.3.1). Leave blank to use version from pyproject.toml'
+        description: 'Tag name to release (e.g., v0.3.2). Leave blank to use version from pyproject.toml'
         required: false
         type: string
       dry_run:
