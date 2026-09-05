@@ -335,10 +335,8 @@ jobs:
           test "$(node -p "require('./sdk/node/package.json').version")" = "${RELEASE_VERSION}"
           npm pack --dry-run ./sdk/node
 
-      - name: Publish public package
-        run: npm publish ./sdk/node --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN }}
+      - name: Publish public package with npm trusted publishing
+        run: npm publish ./sdk/node --access public --provenance
 
   post-release:
     name: Auto-Bump Next Version
