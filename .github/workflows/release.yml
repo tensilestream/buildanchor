@@ -322,11 +322,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js and npm registry
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22.14.0'
-          registry-url: https://registry.npmjs.org
 
       - name: Verify release version and package
         env:
