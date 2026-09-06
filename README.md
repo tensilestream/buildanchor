@@ -498,7 +498,7 @@ workflow do that without anyone having to remember:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/tensilestream/buildanchor
-    rev: v1.12.1
+    rev: v1.12.2
     hooks:
       - id: buildanchor-agent-guidance   # pre-commit, only when a manifest changes
       - id: buildanchor-verify           # pre-push, proves the commands still run

@@ -2,6 +2,14 @@
 
 All notable changes to BuildAnchor are documented here.
 
+## [1.12.2] - 2026-09-06
+
+### Fixed
+
+- **`init --check` failed whenever verification state moved, which is not drift.** The guidance block records how far each command is proven, so running `verify`, editing a manifest, or cloning fresh without a cache all changed the block — and the check called that stale. CI failed with "AGENTS.md does not match this repository's build truth" when nothing about the repository's build truth had changed. The comparison now ignores proof status while the written block still shows it: `--check` fires when a command changes or a module appears, and stays quiet when only the proof moved.
+
+  This is the failure mode this project warns about elsewhere — a gate that fails for reasons unrelated to what it guards teaches people to ignore CI — and it shipped here anyway. Both directions are now pinned by tests.
+
 ## [1.12.1] - 2026-09-06
 
 CI was failing. Four causes, three of them real bugs rather than CI problems.

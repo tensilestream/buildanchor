@@ -25,7 +25,7 @@
     "test": {
       "command": "uv run pytest",
       "working_directory": ".",
-      "status": "declared"
+      "status": "collects"
     },
     "build": {
       "command": "python -m build",
@@ -49,7 +49,7 @@
       "path": "sdk/node",
       "working_directory": "sdk/node",
       "test_command": "npm test",
-      "test_command_status": "declared"
+      "test_command_status": "collects"
     }
   ],
   "verified_commands": {

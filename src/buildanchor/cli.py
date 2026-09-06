@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from collections.abc import Callable
@@ -58,6 +59,35 @@ def _should_render_cli_banner(args: argparse.Namespace) -> bool:
         and not args.agent
         and not args.ci
     )
+
+
+#: Fragments of the guidance block that carry verification state rather than
+#: build truth. They move whenever somebody runs `verify`, a manifest changes,
+#: or a fresh clone has no cache yet — none of which mean the guidance has
+#: stopped describing the repository.
+_VERIFICATION_STATE = (
+    re.compile(r"(?m)^This command is \*\*[a-z]+\*\* — read from a manifest.*$"),
+    re.compile(r"(?m)^Verified: this command reached \*\*[a-z]+\*\*.*$"),
+    re.compile(r"(?m)^`declared` means read from a manifest and not executed\..*$"),
+)
+
+_TABLE_STATUS = re.compile(r"(?m)^(\|(?:[^|\n]*\|){3})[^|\n]*\|$")
+
+
+def _without_verification_state(block: str) -> str:
+    """The block with proof status removed, for staleness comparison.
+
+    `--check` exists to catch guidance that has stopped describing the
+    repository — a command that changed, a module that appeared. It must not
+    fire because somebody ran `verify`, or because a fresh checkout has no cache
+    yet. Those move the proof status without changing a single instruction, and
+    a gate that fails for that is a gate people learn to ignore.
+    """
+    normalised = block
+    for pattern in _VERIFICATION_STATE:
+        normalised = pattern.sub("<verification state>", normalised)
+    normalised = _TABLE_STATUS.sub(r"\1 <verification state> |", normalised)
+    return "\n".join(line.rstrip() for line in normalised.splitlines() if line.strip())
 
 
 def _proven_label(module: dict) -> str:
@@ -206,7 +236,8 @@ def _rule_block_is_current(path: Path, block: str) -> bool:
         return False
     start = existing.index(RULES_MARKER)
     end = existing.index(RULES_END_MARKER) + len(RULES_END_MARKER)
-    return existing[start:end].strip() == block.strip()
+    return (_without_verification_state(existing[start:end])
+            == _without_verification_state(block))
 
 
 def _agent_rule_block(report: Any, phases: dict, shape: str) -> str:

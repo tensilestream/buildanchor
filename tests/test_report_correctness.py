@@ -1039,3 +1039,84 @@ class PathSeparatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(BuildAnchorError):
                 BuildAnchor(directory).diagnose("../..")
+
+
+class DriftCheckTests(unittest.TestCase):
+    """`init --check` must fire on drift and stay quiet on proof state.
+
+    The guidance block carries how far each command is proven, and that moves
+    constantly: somebody runs `verify`, a manifest changes, a fresh clone has no
+    cache. None of those mean the guidance stopped describing the repository. A
+    gate that fails for them is a gate people learn to ignore — and this one did
+    exactly that in CI before it was fixed.
+    """
+
+    def _run(self, *args: str) -> int:
+        import contextlib
+        import io
+
+        from buildanchor.cli import main
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return main(list(args))
+
+    def _project(self, root: Path) -> None:
+        _write(root / "package.json",
+               json.dumps({"name": "app", "scripts": {"test": "node --test"}}))
+        _write(root / "index.test.js", "const t=require('node:test');t('x',()=>{});\n")
+
+    def test_running_verify_does_not_make_the_guidance_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            self._run("init", "--workspace", str(root))
+            self.assertEqual(self._run("init", "--workspace", str(root), "--check"), 0)
+
+            BuildAnchor(str(root)).verify_commands(level="resolvable")
+            self.assertEqual(
+                self._run("init", "--workspace", str(root), "--check"), 0,
+                "running verify made the guidance look stale",
+            )
+
+    def test_a_missing_cache_does_not_make_the_guidance_stale(self) -> None:
+        """A fresh clone has no verification record; that is not drift."""
+        import shutil as _shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            BuildAnchor(str(root)).verify_commands(level="resolvable")
+            self._run("init", "--workspace", str(root))
+            _shutil.rmtree(root / ".buildanchor")
+            self.assertEqual(
+                self._run("init", "--workspace", str(root), "--check"), 0,
+                "a checkout without a cache looked stale",
+            )
+
+    def test_a_changed_command_is_still_caught(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            self._run("init", "--workspace", str(root))
+            guidance = root / "AGENTS.md"
+            guidance.write_text(
+                guidance.read_text(encoding="utf-8").replace("npm test", "yarn test"),
+                encoding="utf-8")
+            self.assertEqual(self._run("init", "--workspace", str(root), "--check"), 1)
+
+    def test_a_new_module_is_still_caught(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            self._run("init", "--workspace", str(root))
+            _write(root / "packages" / "api" / "package.json",
+                   json.dumps({"name": "api", "scripts": {"test": "node --test"}}))
+            self.assertEqual(self._run("init", "--workspace", str(root), "--check"), 1)
+
+    def test_the_written_block_still_shows_the_proof_status(self) -> None:
+        """Ignored for comparison, but a reader should still see it."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            BuildAnchor(str(root)).verify_commands(level="resolvable")
+            self._run("init", "--workspace", str(root))
+            written = (root / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertTrue("resolvable" in written or "declared" in written)

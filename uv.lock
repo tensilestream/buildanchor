@@ -4,7 +4,7 @@ requires-python = ">=3.10"
 
 [[package]]
 name = "buildanchor"
-version = "1.12.1"
+version = "1.12.2"
 source = { editable = "." }
 
 [package.optional-dependencies]
