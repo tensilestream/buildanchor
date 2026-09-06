@@ -67,6 +67,46 @@ where this tool earns nothing, counted honestly.
 uv run python benchmarks/head_to_head.py --format text     # clones the corpus
 ```
 
+<details>
+<summary><strong>The twelve repositories, and what each one declares</strong></summary>
+
+Each is cloned at benchmark time, so these are current rather than a snapshot we
+curated.
+
+| Repository | Declares | Guess | BuildAnchor |
+| --- | --- | --- | --- |
+| pallets/flask | `pyproject.toml` `[tool.tox]` | ✗ `pytest` | ✓ `tox` |
+| psf/requests | `Makefile` `test` target | ✗ `pytest` | ✓ `make test` |
+| encode/httpx | nothing — the default applies | ✓ `pytest` | ✓ `python -m pytest` |
+| pydantic/pydantic | `Makefile` `test` target | ✗ `pytest` | ✓ `make test` |
+| sindresorhus/execa | `package.json` `test` script | ✓ `npm test` | ✓ `npm test` |
+| chalk/chalk | `package.json` `test` script | ✓ `npm test` | ✓ `npm test` |
+| expressjs/express | `package.json` `test` script | ✓ `npm test` | ✓ `npm test` |
+| spf13/cobra | `Makefile` `test` target | ✗ `go test ./...` | ✓ `make test` |
+| stretchr/testify | nothing — the default applies | ✓ `go test ./...` | ✓ `go test ./...` |
+| BurntSushi/ripgrep | nothing — the default applies | ✓ `cargo test` | ✓ `cargo test` |
+| clap-rs/clap | nothing — the default applies | ✓ `cargo test` | ✓ `cargo test` |
+| casey/just | `justfile` `test` recipe | ✗ `cargo test` | ✓ `just test` |
+
+**Method.** The expected answer is what each repository declares, cited by file,
+so you can confirm any row by opening it. Where a project declares nothing, its
+ecosystem default *is* correct and is scored that way — the seven ✓ in the guess
+column are cases where this tool earns nothing, counted honestly.
+
+Of the five failures, two (`flask`, `just`) run a genuinely different tool; the
+other three wrap the same tool with the project's own arguments — cobra's
+`make test` runs `go test` *after* `install_deps`. The benchmark reports that
+split rather than counting them as the same thing.
+
+**Two approaches were discarded getting here**, both recorded in
+[`benchmarks/README.md`](benchmarks/README.md): scraping each project's CI
+workflow proved unreliable on half the corpus, and an early declaration reader
+matched `test-mypy` as a `test` target, which would have credited projects that
+declare no such entry point. A benchmark whose ground truth is unreliable is
+worse than no benchmark.
+
+</details>
+
 Measured against the previous release, on fixtures you can regenerate offline:
 
 | | 1.1.6 | Now |
@@ -80,6 +120,105 @@ Measured against the previous release, on fixtures you can regenerate offline:
 ```bash
 uv run python benchmarks/credibility_benchmark.py --format text
 ```
+
+<details>
+<summary><strong>What the offline benchmark measures, and how</strong></summary>
+
+| Metric | Method |
+| --- | --- |
+| Command correctness | **Executes** each module's emitted test command in its stated working directory and counts exit 0. Not inspected — run. |
+| Discovery completeness | Fraction of project markers in the report's own `evidence` that resolve to a module. |
+| Repository shape | Whether each fixture is classified `single-project`, `root-plus-satellites` or `monorepo` correctly. |
+| Report correctness | Languages claimed vs. demonstrable; malformed dependency coordinates; how many modules contribute dependencies. |
+| Latency at scale | Median and p95 on a 9,300-file git repository, 4,500 of them gitignored. |
+| Agent context cost | Tokens of MCP tool schema resident on every turn. |
+
+Fixtures are generated offline — no network, no package installs. Each Python
+project gets a real virtualenv holding a private dependency, so its tests are
+genuinely importable from that project and genuinely not from the repository
+root. That is what makes the correctness number a test rather than a restatement
+of the code's own assumptions.
+
+**CI enforces these.** `--assert-thresholds` fails the build when command
+correctness, discovery completeness, module count, malformed-coordinate count,
+shape classification, or per-ecosystem command resolution regress — verified by
+deliberately reintroducing a fixed bug and confirming the gate caught it with the
+right diagnosis.
+
+</details>
+
+## Compatibility
+
+<!-- compatibility:start -->
+
+### Ecosystems
+
+| Ecosystem | Command resolved from | Verified with |
+| --- | --- | --- |
+| Java/Maven | `pom.xml` `<modules>`, `mvnw` | `mvn -DskipTests test-compile` |
+| Java/Gradle | `settings.gradle`, `gradlew` | `gradle testClasses` |
+| Node.js | `package.json` scripts + the lockfile's package manager | `jest`, `mocha`, `playwright`, `vitest`, `node --test` |
+| Python | `pyproject.toml`, `uv.lock`, `poetry.lock`, `.venv/` | `pytest --collect-only`, `unittest -k` |
+| Go | `go.mod`, `go.work` | `go test -run '^$'` |
+| Rust | `Cargo.toml` `[workspace]` | `cargo test --no-run` |
+| .NET | `global.json`, `*.csproj` | `dotnet test --list-tests` |
+
+An ecosystem without a discovery probe still resolves a command and reports
+`resolvable (no probe available)` rather than guessing that it works.
+
+### Task runners your repository already declares
+
+These take precedence over the ecosystem default — if your `justfile` says
+`test: cargo nextest run`, that is the answer, not `cargo test`.
+
+| Runner | Declared in |
+| --- | --- |
+| just | `justfile`, `Justfile`, `.justfile` |
+| Task | `Taskfile.yml`, `Taskfile.yaml` |
+| mise | `mise.toml`, `.mise.toml` |
+| make | `Makefile`, `makefile`, `GNUmakefile` |
+| nox | `noxfile.py` |
+| tox | `tox.ini`, `pyproject.toml` `[tool.tox]`, `setup.cfg` |
+
+(6 runners.)
+
+### Agent clients
+
+One tool surface, in whatever dialect your client speaks.
+
+| `format=` | Works with | Verified against |
+| --- | --- | --- |
+| `anthropic` *(default)* | Anthropic Messages API | — |
+| `openai` | OpenAI, LiteLLM, LangChain, OpenRouter, vLLM, most gateways | LiteLLM 1.100.0 |
+| `gemini` | Google GenAI, Vertex AI | `google-genai` `types.Tool` |
+| `bedrock` | AWS Bedrock Converse | botocore service model |
+| `mcp` | Any MCP client — Claude Code, Cursor, Copilot, Codex | — |
+
+### Interfaces
+
+| Surface | Operations | Notes |
+| --- | --- | --- |
+| CLI | all | `buildanchor <command>` |
+| MCP server | 3 advertised | 3 core tools, ~700 tokens of schema |
+| HTTP | 15 | local-only operations are refused |
+| Python SDK | 16 | sync and async |
+| Node SDK | 16 | local and HTTP transports |
+| Java SDK | 16 | local and HTTP transports |
+
+### Platforms
+
+| | Status |
+| --- | --- |
+| Python | 3.10 – 3.13, tested on 3.10 and 3.13 in CI |
+| Linux, macOS | tested in CI |
+| Windows | non-blocking CI job; `command_shell` is POSIX `sh` — use `working_directory` |
+| Runtime dependencies | none |
+
+<!-- compatibility:end -->
+
+This chart is generated from the tables the tool actually uses
+(`scripts/generate_compatibility.py`) and a CI check fails when it drifts, so it
+cannot claim support that does not exist or omit support that does.
 
 ## Quick Start (Get Started in 10 Seconds)
 
@@ -211,6 +350,51 @@ if results:
                  {"role": "user", "content": results}]
 ```
 
+Whatever you build on, the tools are the same — pass the dialect it speaks:
+
+| `format=` | For | Shape |
+| --- | --- | --- |
+| `anthropic` *(default)* | Messages API | `input_schema` |
+| `openai` | OpenAI, **LiteLLM**, LangChain, OpenRouter, most gateways | `{"type": "function", ...}` |
+| `gemini` | Google GenAI / Vertex | `function_declarations` |
+| `bedrock` | AWS Converse | `toolSpec` |
+| `mcp` | Model Context Protocol | `inputSchema` |
+
+Each shape was checked against the library that consumes it rather than written
+from memory: `google.genai.types.Tool` accepts the Gemini declarations, botocore
+validates the Bedrock `ToolConfiguration` against its own service model, and
+LiteLLM 1.100.0's completion path accepts the OpenAI schemas. None of those are
+dependencies — BuildAnchor still installs with none.
+
+`run_tool_call` reads all four call shapes (`function`, `tool_use`,
+`functionCall`, `toolUse`), and `tool_result(call, result, format=...)` returns
+what that API expects back:
+
+```python
+import litellm
+from buildanchor import agent
+
+response = litellm.completion(
+    model="claude-opus-5",                      # or any model LiteLLM routes to
+    messages=[{"role": "user", "content": "Run this project's tests."}],
+    tools=agent.tool_definitions(format="openai"),
+)
+
+for call in response.choices[0].message.tool_calls or []:
+    result = agent.run_tool_call(call, workspace=".")            # parses JSON-string args
+    messages.append(agent.tool_result(call, result, format="openai"))
+```
+
+`run_tool_call` exists because of a detail that bites people: OpenAI-shaped
+clients return `function.arguments` as a **JSON string**, not a dict, so passing
+it straight to a tool raises deep inside. It accepts provider objects and plain
+dicts alike, and returns malformed arguments as an error result rather than an
+exception.
+
+Bedrock's `toolResult` is the only one with an explicit `status`, so a failed
+call is reported as a failure there rather than as text that happens to say
+"error".
+
 Node is the same shape:
 
 ```javascript
@@ -314,7 +498,7 @@ workflow do that without anyone having to remember:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/tensilestream/buildanchor
-    rev: v1.9.0
+    rev: v1.12.0
     hooks:
       - id: buildanchor-agent-guidance   # pre-commit, only when a manifest changes
       - id: buildanchor-verify           # pre-push, proves the commands still run

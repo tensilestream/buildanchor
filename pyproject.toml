@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "buildanchor"
-version = "1.9.0"
+version = "1.12.0"
 description = "Local-first Build Truth and change validation for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.10"

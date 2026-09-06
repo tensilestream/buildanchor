@@ -37,6 +37,9 @@ jobs:
         run: uv run python -m unittest tests.test_sdk_conformance -v
       - name: Check version markers agree across artifacts
         run: uv run python scripts/bump_version.py --check
+      - name: Check the compatibility chart matches the code
+        # A support claim that is not true is worse than no chart.
+        run: uv run python scripts/generate_compatibility.py --check
       - name: Enforce published claims
         # The credibility benchmark produces every headline number in the README.
         # Running it here means a regression fails the build rather than quietly

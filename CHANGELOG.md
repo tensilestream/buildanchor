@@ -2,6 +2,36 @@
 
 All notable changes to BuildAnchor are documented here.
 
+## [1.12.0] - 2026-09-06
+
+### Added
+
+- **A compatibility chart in the README**, covering ecosystems and how each command is resolved and verified, the six task runners a repository can declare, the five agent dialects and what each was validated against, every interface with its operation count, and platform support. It is **generated from the tables the tool actually uses** by `scripts/generate_compatibility.py`, and CI fails when it drifts — a support claim that is not true is worse than no chart. Verified by adding a probe and a task runner and confirming the check caught both.
+- **Benchmark detail behind expandable sections**: the twelve repositories in the head-to-head with what each declares and how each strategy scored, and the method behind every offline metric. Both include what was tried and discarded, so a reader can see where the numbers could have been wrong.
+
+## [1.11.0] - 2026-09-06
+
+Five dialects, one tool surface.
+
+### Added
+
+- **`tool_definitions(format=...)` supports `anthropic`, `openai`, `gemini`, `bedrock` and `mcp`.** The same three tools with the same descriptions and schemas, shaped for whichever client consumes them; a test asserts every dialect describes an identical surface. `LITELLM_FORMAT`, `LANGCHAIN_FORMAT` and `OPENROUTER_FORMAT` are named aliases for `openai`, because those are what people search for.
+- **`run_tool_call()` reads every provider's call shape** — OpenAI's `function`, Anthropic's `tool_use`, Gemini's `functionCall` and Bedrock's `toolUse`, in both object and wire-dict form, and in both camelCase and snake_case.
+- **`tool_result(call, result, format=...)`** returns what each API expects back: a `role: "tool"` message, an Anthropic `tool_result` block, a Gemini `functionResponse`, or a Converse `toolResult`. Bedrock's is the only shape with an explicit `status`, so a failed call is reported as a failure rather than as text that happens to say "error". `tool_message` and `tool_result_block` remain as the named forms.
+
+### Notes
+
+- Gemini declarations use `parameters_json_schema`, not `parameters`. The latter expects Gemini's OpenAPI 3.0 subset and silently ignores keywords outside it, which loses argument descriptions with no error.
+- Every shape was checked against the library that consumes it: `google.genai.types.Tool` and `FunctionResponse` accepted the Gemini output, botocore validated the Bedrock `ToolConfiguration` and `ToolResultBlock` against its own service model, and LiteLLM 1.100.0's completion path accepted the OpenAI schemas. None of those libraries are dependencies — BuildAnchor still installs with zero.
+
+## [1.10.0] - 2026-09-06
+
+### Added
+
+- **`tool_definitions(format="openai")`** emits the function-calling shape used by LiteLLM, OpenAI, LangChain and most gateways, alongside the existing Messages API shape. Same tools, same descriptions, same schemas — a test asserts the two dialects describe an identical surface.
+- **`run_tool_call()` and `tool_message()`** handle the two differences that are easy to miss: an OpenAI-shaped client returns `function.arguments` as a **JSON string** rather than a dict, and results go back as a `role: "tool"` message rather than a content block. Malformed arguments come back as an error result, not an exception.
+- Verified against LiteLLM 1.100.0: its completion path accepts the schemas, and the `ChatCompletionMessageToolCall` object it returns dispatches through `run_tool_call` unchanged.
+
 ## [1.9.0] - 2026-09-06
 
 The SDK is what lets someone build an agent on this, rather than only wire it

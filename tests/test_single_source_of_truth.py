@@ -195,3 +195,43 @@ class ContradictionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompatibilityChartTests(unittest.TestCase):
+    """The README's support matrix is generated, not written.
+
+    A hand-maintained chart is stale the moment someone adds a probe and forgets
+    the README — and a support claim that is not true is worse than no chart.
+    """
+
+    def test_the_chart_matches_the_code(self) -> None:
+        import subprocess
+        import sys as _sys
+        result = subprocess.run(
+            [_sys.executable, str(REPO_ROOT / "scripts" / "generate_compatibility.py"), "--check"],
+            capture_output=True, text=True, check=False, cwd=REPO_ROOT,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_every_ecosystem_the_code_supports_appears(self) -> None:
+        from buildanchor.build_truth.core.build_systems import ECOSYSTEM_LABELS, MARKERS
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        for system, _markers, _languages in MARKERS:
+            if system == "generic":
+                continue
+            self.assertIn(ECOSYSTEM_LABELS[system], readme,
+                          f"{system} is supported but absent from the compatibility chart")
+
+    def test_every_task_runner_appears(self) -> None:
+        from buildanchor.build_truth.core import conventions
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        for runner in conventions._RUNNERS:
+            self.assertIn(runner["files"][0], readme,
+                          f"{runner['name']} is supported but absent from the chart")
+
+    def test_every_agent_dialect_appears(self) -> None:
+        from buildanchor import agent
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        for dialect in agent.FORMATS:
+            self.assertIn(f"`{dialect}`", readme,
+                          f"the {dialect} dialect is supported but absent from the chart")
