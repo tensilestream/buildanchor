@@ -40,6 +40,12 @@ jobs:
       - name: Check the compatibility chart matches the code
         # A support claim that is not true is worse than no chart.
         run: uv run python scripts/generate_compatibility.py --check
+      - name: BuildAnchor checks itself
+        # Using the checkout, not a published release: the whole point is to
+        # catch a regression before it ships, and a released binary cannot.
+        run: |
+          uv run buildanchor init --check
+          uv run buildanchor verify --verify-level collects
       - name: Enforce published claims
         # The credibility benchmark produces every headline number in the README.
         # Running it here means a regression fails the build rather than quietly

@@ -140,7 +140,7 @@ def build_section() -> str:
         "",
         "| | Status |",
         "| --- | --- |",
-        "| Python | 3.10 – 3.13, tested on 3.10 and 3.13 in CI |",
+        "| Python | 3.10 to 3.13, tested on 3.10 and 3.13 in CI |",
         "| Linux, macOS | tested in CI |",
         "| Windows | non-blocking CI job; `command_shell` is POSIX `sh` — use `working_directory` |",
         "| Runtime dependencies | none |",

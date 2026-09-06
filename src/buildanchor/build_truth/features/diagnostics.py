@@ -117,10 +117,14 @@ class DiagnosticsMixin:
 
     def _diagnose_path(self, target: str, report: Any) -> dict[str, Any]:
         directory = (self.workspace / target).resolve()
+        # Containment is checked explicitly. `_relative` deliberately does not
+        # raise — it falls back for display — so relying on its exception to
+        # refuse an escape would silently stop refusing anything.
         try:
-            relative = str(directory.relative_to(self.workspace))
+            directory.relative_to(self.workspace)
         except ValueError as exc:
             raise BuildAnchorError(f"path is outside the workspace: {target}") from exc
+        relative = self._relative(directory)
         relative = "." if relative == "." else relative
 
         result: dict[str, Any] = {
@@ -169,9 +173,9 @@ class DiagnosticsMixin:
 
         tracked = self._git_tracked_files()
         if tracked is not None:
-            prefix = str(directory.relative_to(self.workspace))
+            prefix = self._relative(directory)
             inside = any(
-                str(path.relative_to(self.workspace)).startswith("" if prefix == "." else prefix + "/")
+                self._relative(path).startswith("" if prefix == "." else prefix + "/")
                 for path in tracked
             )
             if not inside:

@@ -429,7 +429,7 @@ def _mcp_version() -> str:
         from importlib.metadata import version
         return version("buildanchor")
     except Exception:
-        return "1.12.0"
+        return "1.12.1"
 
 
 def _json_response(value: Any) -> str:

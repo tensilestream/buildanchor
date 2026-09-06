@@ -4,20 +4,18 @@
       "command": "uv run pytest",
       "full_run_duration_ms": null,
       "level_reached": "collects",
-      "manifest_digest": "sha256:ebe019d964799e8aa7b85f95d8a0aa9cba8822dff0b2ae1e75f76f74f426a077",
+      "manifest_digest": "sha256:b5671e53b03cd7b5fa80e9e01bc1af88bc77be4bbba2fe6899906b419baf07c2",
       "outcome": "collects",
-      "source": "local",
-      "verified_at": "2026-09-06T01:04:26Z",
+      "verified_at": "2026-09-06T03:01:30Z",
       "working_directory": "."
     },
     "sdk/node::test": {
       "command": "npm test",
       "full_run_duration_ms": null,
       "level_reached": "collects",
-      "manifest_digest": "sha256:7149ab62419e482a71dd4ff10adfe411c6e645816c76b6863164e370d31d21f1",
+      "manifest_digest": "sha256:37ab26d0ba8dafe6ce00dadca964d22dbb80e2adc6d4593ff3c59b3926086b6d",
       "outcome": "collects",
-      "source": "local",
-      "verified_at": "2026-09-06T01:04:26Z",
+      "verified_at": "2026-09-06T03:01:30Z",
       "working_directory": "sdk/node"
     }
   },

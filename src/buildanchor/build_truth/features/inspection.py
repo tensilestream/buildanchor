@@ -369,6 +369,21 @@ class InspectionMixin:
                 files.append(Path(full))
         return files
 
+    def _relative(self, path: Path) -> str:
+        """A repository-relative path, always with forward slashes.
+
+        These strings are data: they appear in reports, in the committed
+        verification cache's keys, and in evidence entries. Windows would render
+        them ``sdk\\node`` and every other platform ``sdk/node``, so the same
+        repository would produce two different reports and a committed cache
+        that churns whenever the platform changes. Git speaks forward slashes;
+        so does this.
+        """
+        try:
+            return path.relative_to(self.workspace).as_posix()
+        except ValueError:
+            return path.as_posix()
+
     def _assert_inside(self, path: Path) -> None:
         try:
             path.relative_to(self.allow_root)
@@ -385,7 +400,7 @@ class InspectionMixin:
     def _evidence(self, path: Path, kind: str, detail: str):
         from ...models import Evidence
         data = path.read_bytes()
-        relative = str(path.relative_to(self.workspace))
+        relative = self._relative(path)
         digest = hashlib.sha256(data).hexdigest()
         return Evidence(f"ev_{digest[:12]}", kind, relative, f"sha256:{digest}", detail)
 
@@ -405,7 +420,7 @@ class InspectionMixin:
         """
         digest = hashlib.sha256()
         for path in sorted(files):
-            digest.update(str(path.relative_to(self.workspace)).encode())
+            digest.update(self._relative(path).encode())
             if self._is_significant(path):
                 digest.update(path.read_bytes())
         return f"sha256:{digest.hexdigest()}"
@@ -567,9 +582,9 @@ class InspectionMixin:
                 try:
                     json.loads(text)
                 except (json.JSONDecodeError, ValueError):
-                    broken.append(str(path.relative_to(self.workspace)))
+                    broken.append(self._relative(path))
             elif not manifest_parsing.is_parseable(text):
-                broken.append(str(path.relative_to(self.workspace)))
+                broken.append(self._relative(path))
         return sorted(broken)
 
     def _unresolved_markers(self, evidence: list, modules: list[dict[str, Any]]) -> list[str]:
@@ -676,7 +691,7 @@ class InspectionMixin:
         node_pkgs = [p for p in files if p.name == "package.json" and p.parent != self.workspace]
 
         for pkg_file in node_pkgs:
-            rel_dir = str(pkg_file.parent.relative_to(self.workspace))
+            rel_dir = self._relative(pkg_file.parent)
             is_matched = False
             if workspace_globs:
                 for pat in workspace_globs:
@@ -792,7 +807,7 @@ class InspectionMixin:
             if "[workspace]" in cargo_text:
                 cargo_sub_files = [p for p in files if p.name == "Cargo.toml" and p.parent != self.workspace]
                 for c_file in cargo_sub_files:
-                    rel_dir = str(c_file.parent.relative_to(self.workspace))
+                    rel_dir = self._relative(c_file.parent)
                     sub_cargo_text = self._read(c_file)
                     name_m = re.search(r'\[package\]\s*name\s*=\s*[\x27"]([^\x27"]+)[\x27"]', sub_cargo_text)
                     crate_name = name_m.group(1) if name_m else Path(rel_dir).name
@@ -831,7 +846,7 @@ class InspectionMixin:
         # 6. Python Workspaces / Polyglot Subprojects
         py_sub_files = [p for p in files if p.name in ("pyproject.toml", "setup.py") and p.parent != self.workspace]
         for py_file in py_sub_files:
-            rel_dir = str(py_file.parent.relative_to(self.workspace))
+            rel_dir = self._relative(py_file.parent)
             first_part = Path(rel_dir).parts[0] if Path(rel_dir).parts else ""
             if first_part in standard_roots or len(Path(rel_dir).parts) <= 2:
                 py_text = self._read(py_file)
@@ -861,10 +876,10 @@ class InspectionMixin:
         return [discovered[k] for k in sorted(discovered.keys())]
 
     def _maven_modules(self, paths: list[Path]) -> list[str]:
-        return [str(path.parent.relative_to(self.workspace)) or "." for path in paths if path.name == "pom.xml"]
+        return [self._relative(path.parent) or "." for path in paths if path.name == "pom.xml"]
 
     def _gradle_modules(self, paths: list[Path]) -> list[str]:
-        return [str(path.parent.relative_to(self.workspace)) or "." for path in paths if path.name.startswith("settings.gradle")]
+        return [self._relative(path.parent) or "." for path in paths if path.name.startswith("settings.gradle")]
 
     def _command(self, command: list[str], reason: str, paths: list[Path],
                  working_directory: str = ".") -> dict[str, Any]:
@@ -881,7 +896,7 @@ class InspectionMixin:
             "command_shell": " ".join(command) if working_directory == "." else f"cd {working_directory} && {' '.join(command)}",
             "status": "candidate" if proven == "declared" else proven,
             "reason": reason,
-            "evidence": [str(path.relative_to(self.workspace)) for path in paths],
+            "evidence": [self._relative(path) for path in paths],
         }
 
     def _git_info(self) -> dict[str, Any]:

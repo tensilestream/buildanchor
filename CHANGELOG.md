@@ -2,6 +2,22 @@
 
 All notable changes to BuildAnchor are documented here.
 
+## [1.12.1] - 2026-09-06
+
+CI was failing. Four causes, three of them real bugs rather than CI problems.
+
+### Fixed
+
+- **Repository-relative paths are always forward-slashed.** `str(Path("sdk") / "node")` is `sdk\node` on Windows, and those strings are data: they appear in reports, in evidence entries, and in the **keys of the committed verification cache**. A Windows contributor and a Linux one would have produced different reports for the same repository and a cache that churns on every platform switch. Git speaks forward slashes; so does this now, through one `_relative()` helper used at all fourteen sites.
+- **`doctor` stopped refusing paths outside the workspace.** Introduced by the change above: the refusal relied on `relative_to` raising, and the new helper deliberately does not raise. Containment is now checked explicitly, because a guard that depends on an exception someone else may remove is not a guard. Caught by an existing test.
+- **The workflow BuildAnchor ships as a template was running against BuildAnchor itself**, installing the *published* release from PyPI and checking it against flags that only exist in the checkout — which is why `init --check` reported `unrecognized arguments: --check` from a 1.1.6 CLI. The template moved to `docs/integration/buildanchor.yml`, where GitHub does not execute it, and CI now checks BuildAnchor with the code under review.
+- **A lint failure**: an en dash in the compatibility generator that reads as a hyphen.
+- **`tests/test_report_correctness.py` only passed when another test module had already imported `unittest.mock`.** Every test file now passes standalone, which is what a sharded or filtered CI run does.
+
+### Notes
+
+- The Windows job stays non-blocking. The path-separator fix addresses the most likely cause, but that was diagnosed by reading the code rather than the failing log, so it is not yet a claim that Windows is green.
+
 ## [1.12.0] - 2026-09-06
 
 ### Added

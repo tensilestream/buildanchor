@@ -89,7 +89,7 @@ class PackageIntelligenceMixin:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            relative = str(path.relative_to(self.workspace))
+            relative = self._relative(path)
             for number, line in enumerate(text.splitlines(), 1):
                 if len(line) > 400:
                     continue

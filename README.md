@@ -209,7 +209,7 @@ One tool surface, in whatever dialect your client speaks.
 
 | | Status |
 | --- | --- |
-| Python | 3.10 – 3.13, tested on 3.10 and 3.13 in CI |
+| Python | 3.10 to 3.13, tested on 3.10 and 3.13 in CI |
 | Linux, macOS | tested in CI |
 | Windows | non-blocking CI job; `command_shell` is POSIX `sh` — use `working_directory` |
 | Runtime dependencies | none |
@@ -498,7 +498,7 @@ workflow do that without anyone having to remember:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/tensilestream/buildanchor
-    rev: v1.12.0
+    rev: v1.12.1
     hooks:
       - id: buildanchor-agent-guidance   # pre-commit, only when a manifest changes
       - id: buildanchor-verify           # pre-push, proves the commands still run

@@ -10,6 +10,7 @@ polyglot monorepo, and each fails against the behaviour that shipped in 1.1.6.
 import json
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from buildanchor import BuildAnchor
@@ -978,3 +979,63 @@ class ReversibilityTests(unittest.TestCase):
             _write(root / "justfile", "test:\n    echo hi\n")
             runners = conventions.declared_runners(root)
             self.assertEqual(len(runners), len({name.lower() for name in runners}))
+
+
+class PathSeparatorTests(unittest.TestCase):
+    """Repository-relative paths are data, so they must not vary by platform.
+
+    On Windows ``str(Path("sdk") / "node")`` is ``sdk\\node``. These strings end
+    up in reports, in evidence entries, and in the *committed* verification
+    cache's keys — so a Windows contributor and a Linux one would produce two
+    different reports for the same repository, and a cache that churns on every
+    platform switch. Git speaks forward slashes; so does this.
+    """
+
+    def _monorepo(self, root: Path) -> None:
+        _write(root / "sdk" / "node" / "package.json",
+               json.dumps({"name": "sdk", "scripts": {"test": "node --test"}}))
+        _write(root / "services" / "api" / "pyproject.toml",
+               '[project]\nname = "api"\nversion = "1"\n')
+
+    def test_module_paths_use_forward_slashes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._monorepo(root)
+            for module in BuildAnchor(str(root)).inspect().module_details:
+                self.assertNotIn("\\", module["path"])
+                self.assertNotIn("\\", module["working_directory"])
+            paths = {m["path"] for m in BuildAnchor(str(root)).inspect().module_details}
+            self.assertIn("sdk/node", paths)
+
+    def test_evidence_paths_use_forward_slashes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._monorepo(root)
+            for item in BuildAnchor(str(root)).inspect().evidence:
+                self.assertNotIn("\\", item.path)
+
+    def test_the_committed_cache_uses_forward_slashes(self) -> None:
+        """Otherwise the file churns whenever the platform changes."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._monorepo(root)
+            BuildAnchor(str(root)).verify_commands(level="resolvable")
+            written = (root / ".buildanchor" / "verified.json").read_text(encoding="utf-8")
+            self.assertNotIn("\\\\", written)
+            self.assertIn("sdk/node::test", json.loads(written)["entries"])
+
+    def test_shell_form_matches_the_working_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._monorepo(root)
+            for module in BuildAnchor(str(root)).inspect().module_details:
+                if module["working_directory"] != "." and module["test_command_shell"]:
+                    self.assertIn(f"cd {module['working_directory']} &&",
+                                  module["test_command_shell"])
+
+    def test_a_path_outside_the_workspace_is_still_refused(self) -> None:
+        """`_relative` does not raise, so containment is checked explicitly."""
+        from buildanchor.build_truth.core.errors import BuildAnchorError
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(BuildAnchorError):
+                BuildAnchor(directory).diagnose("../..")

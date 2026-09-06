@@ -9,6 +9,12 @@
 # proves the commands it advertises actually run.
 #
 # Copy into .github/workflows/ of any repository.
+#
+# It deliberately lives here rather than in .github/workflows/. GitHub runs every
+# workflow file in that directory, and this one installs BuildAnchor from PyPI —
+# so in BuildAnchor's own repository it would test the *published* release
+# against the checkout's flags and fail. BuildAnchor checks itself in ci.yml,
+# using the code under review.
 
 name: BuildAnchor
 
