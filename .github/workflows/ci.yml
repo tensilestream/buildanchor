@@ -15,6 +15,8 @@ jobs:
         python-version: ['3.10', '3.13']
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -25,10 +27,21 @@ jobs:
         run: uv sync --locked
       - name: Compile Python sources
         run: uv run python -m compileall -q src tests
+      - name: Lint
+        run: uvx ruff check .
       - name: Run tests
         run: uv run python -m unittest discover -s tests -v
-      - name: Run benchmark smoke test
-        run: uv run python benchmarks/benchmark_cli.py --iterations 3 --warmups 1 --format json
+      - name: SDK conformance
+        # Fails when any SDK falls behind buildanchor/operations.py, which is
+        # how the Java client silently ended up six operations short.
+        run: uv run python -m unittest tests.test_sdk_conformance -v
+      - name: Check version markers agree across artifacts
+        run: uv run python scripts/bump_version.py --check
+      - name: Enforce published claims
+        # The credibility benchmark produces every headline number in the README.
+        # Running it here means a regression fails the build rather than quietly
+        # making the documentation wrong.
+        run: uv run python benchmarks/credibility_benchmark.py --assert-thresholds --format text
       - name: Smoke test global editable install against the checkout
         run: |
           tool_root="${RUNNER_TEMP}/buildanchor-tool"
@@ -38,6 +51,29 @@ jobs:
             uv tool install --editable . --force
           echo "${tool_root}/bin" >> "${GITHUB_PATH}"
           "${tool_root}/bin/buildanchor" inspect --workspace "${GITHUB_WORKSPACE}" --format json > "${RUNNER_TEMP}/buildanchor-report.json"
+
+  windows:
+    # BuildAnchor resolves `.venv/Scripts/python.exe`, so Windows support is
+    # intended. It has never been tested. This job reports the truth without
+    # blocking the build; once it is green it becomes required, and if it cannot
+    # be made green, Windows is documented as unsupported. The current middle —
+    # claiming support and never running it — is the only dishonest option.
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Sync project environment
+        run: uv sync --locked
+      - name: Run tests
+        run: uv run python -m unittest discover -s tests -v
+      - name: Resolve a command end to end
+        run: uv run buildanchor cmd test --explain
 
   java-sdk:
     runs-on: ubuntu-latest

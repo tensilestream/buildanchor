@@ -85,7 +85,7 @@ jobs:
         run: npm pack --dry-run ./sdk/node
 
       - name: Run benchmark smoke test
-        run: uv run python benchmarks/benchmark_cli.py --iterations 3 --warmups 1 --format json
+        run: uv run python benchmarks/credibility_benchmark.py --assert-thresholds --format text
 
   build:
     name: Build Distribution Packages
@@ -306,6 +306,11 @@ jobs:
         with:
           packages-dir: dist/
           skip-existing: true
+          # Signed provenance, so anyone can verify that this artifact was built
+          # from this repository by this workflow. For a young project asking to
+          # run commands on someone's machine, "trust me" is not an argument;
+          # a verifiable build is.
+          attestations: true
 
   publish-npm:
     name: Publish Node SDK to npm

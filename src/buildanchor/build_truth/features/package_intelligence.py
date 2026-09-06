@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-import json
 import re
+from pathlib import Path
 
 from ..adapters import adapter_for
-from ..core.token_estimation import count_tokens
 from ..core.errors import BuildAnchorError
+from ..core.token_estimation import count_tokens
 
 
 class PackageIntelligenceMixin:
@@ -54,31 +54,68 @@ class PackageIntelligenceMixin:
             "token_estimate": tokens,
         }
 
-    def _grep_usage(self, name: str, extensions: set[str]) -> list[dict]:
-        hits = []
-        ignored = {"node_modules", ".venv", "venv", "target", "build", "dist", "__pycache__"}
-        pattern = re.compile(re.escape(name), re.I)
-        for path in self.workspace.rglob("*"):
-            if not path.is_file():
-                continue
-            if path.suffix.lower() not in extensions:
-                continue
-            if any(p in ignored for p in path.parts):
+    #: Source extensions worth indexing for import statements.
+    INDEXED_SUFFIXES = frozenset({
+        ".py", ".pyi", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts",
+        ".java", ".kt", ".kts", ".scala", ".go", ".rs", ".cs", ".fs", ".rb", ".php",
+        ".swift", ".dart", ".ex", ".exs",
+    })
+
+    #: Tokens that make a line an import rather than an incidental mention.
+    IMPORT_TOKENS = ("import", "require", "use ", "using ", "from ")
+
+    #: Guard against a pathological repository: the index is a convenience, and
+    #: it should never be the reason an inspection becomes expensive.
+    MAX_INDEXED_LINES = 20_000
+
+    def _import_index(self) -> list[tuple[str, int, str]]:
+        """Return every import-like line in the workspace, built once per digest.
+
+        The usage scan used to re-read the source tree on every lookup — and via
+        ``rglob``, so it traversed dependency directories before discarding them.
+        That was 92% of the cost of ``find_package``. Import lines are a tiny
+        fraction of a repository, so they are collected once and filtered.
+        """
+        files, digest = self._scan()
+        cached = getattr(self, "_import_index_cache", None)
+        if cached is not None and cached[0] == digest:
+            return cached[1]
+
+        index: list[tuple[str, int, str]] = []
+        for path in files:
+            if path.suffix.lower() not in self.INDEXED_SUFFIXES:
                 continue
             try:
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            for i, line in enumerate(lines, 1):
-                if pattern.search(line) and ("import" in line or "require" in line or "use " in line):
-                    hits.append({
-                        "file": str(path.relative_to(self.workspace)),
-                        "line": i,
-                        "text": line.strip()[:120],
-                    })
-                    if len(hits) >= 10:
-                        return hits
+            relative = str(path.relative_to(self.workspace))
+            for number, line in enumerate(text.splitlines(), 1):
+                if len(line) > 400:
+                    continue
+                lowered = line.lower()
+                if any(token in lowered for token in self.IMPORT_TOKENS):
+                    index.append((relative, number, line.strip()[:120]))
+                    if len(index) >= self.MAX_INDEXED_LINES:
+                        self._import_index_cache = (digest, index)
+                        return index
+        self._import_index_cache = (digest, index)
+        return index
+
+    def _grep_usage(self, name: str, extensions: set[str]) -> list[dict]:
+        """Return up to ten import sites for ``name`` in files of ``extensions``."""
+        pattern = re.compile(re.escape(name), re.I)
+        suffixes = {suffix.lower() for suffix in extensions}
+        hits: list[dict] = []
+        for relative, number, text in self._import_index():
+            if suffixes and Path(relative).suffix.lower() not in suffixes:
+                continue
+            if pattern.search(text):
+                hits.append({"file": relative, "line": number, "text": text})
+                if len(hits) >= 10:
+                    break
         return hits
+
 
     def _package_guidance(self, name: str, results: list[dict], report) -> str:
         if not results:

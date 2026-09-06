@@ -6,11 +6,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ...compatibility import compatibility_recommendations
 from ...models import BuildReport, ContextPack, PromptBlock
 from ..core.build_systems import ECOSYSTEM_LABELS
-from ..core.token_estimation import cost_tier, count_tokens
 from ..core.errors import BuildAnchorError
+from ..core.token_estimation import cost_tier, count_tokens
 
 
 class ContextMixin:
@@ -41,12 +40,22 @@ class ContextMixin:
         if proven_facts:
             lines.append("Runtime facts:")
             for fact in proven_facts[:8]:  # cap at 8 to stay concise
-                lines.append(f"  {fact.key} = {fact.value}")
+                scope = f" [{fact.module}]" if getattr(fact, "module", None) else ""
+                lines.append(f"  {fact.key}{scope} = {fact.value}")
 
-        # Validation commands (most useful for agent after acting)
-        test_cmds = [" ".join(item["command"]) for item in report.validation_commands[:3]]
+        # Validation commands (most useful for agent after acting). The shell
+        # form carries the working directory: a bare command is ambiguous the
+        # moment a repository holds more than one project, and an injected
+        # block that omits it is telling the agent to run it in the wrong place.
+        test_cmds = [
+            item.get("command_shell") or " ".join(item["command"])
+            for item in report.validation_commands[:3]
+        ]
         if test_cmds:
             lines.append(f"Validate with: {' ; '.join(test_cmds)}")
+            unproven = [i for i in report.validation_commands[:3] if i.get("status") == "candidate"]
+            if unproven:
+                lines.append("  (candidate commands — run 'buildanchor verify' to prove they execute)")
 
         # Compatibility constraints (critical — prevents wrong package choices)
         errors = [r for r in report.recommendations if r.get("severity") == "error"]
@@ -81,9 +90,12 @@ class ContextMixin:
                     lines.append(f"  Advice: {w['recommendation']}")
             lines.append(f"Objective: {objective}")
 
-        # Monorepo topology
-        if report.module_details:
-            lines.append(f"Monorepo: {len(report.module_details)} module(s) detected")
+        # Repository shape. Advice is only worth injecting when there is a
+        # decision to make: telling a single-project repository to scope its
+        # tests is noise, and noise makes an agent discount the whole block.
+        shape = (report.repository or {}).get("shape", "unknown")
+        if shape == "monorepo":
+            lines.append(f"Monorepo: {len(report.module_details)} module(s) — do not run the whole suite")
             ui_mods = [m["name"] for m in report.module_details if m.get("category") == "ui"]
             be_mods = [m["name"] for m in report.module_details if m.get("category") == "backend"]
             if ui_mods:
@@ -91,6 +103,11 @@ class ContextMixin:
             if be_mods:
                 lines.append(f"  Backend modules: {', '.join(be_mods[:4])} (use: buildanchor cmd test --scope backend)")
             lines.append("  Target changed packages: buildanchor cmd test --changed")
+        elif shape == "root-plus-satellites":
+            names = ", ".join(m["path"] for m in report.module_details[:4])
+            lines.append(f"Single project at the root; subordinate package(s): {names}")
+        elif shape == "single-project":
+            lines.append("Single-project repository: one test command, no scoping needed.")
 
         # Git baseline info
         if report.git.get("baseline_capable"):
@@ -174,8 +191,11 @@ class ContextMixin:
                 constraints.append(f"[{item.get('severity','warn').upper()}] {item['code']}: {item['message']}")
             elif item.get("requested"):
                 constraints.append(f"use {item['recommended']} instead of {item['requested']} ({item['code']})")
-        if report.module_details:
-            constraints.append(f"Monorepo: {len(report.module_details)} modules. Use 'buildanchor cmd test --scope ui|backend' or '--changed'.")
+        if (report.repository or {}).get("shape") == "monorepo":
+            constraints.append(
+                f"Monorepo: {len(report.module_details)} modules. "
+                "Use 'buildanchor cmd test --scope ui|backend' or '--changed'."
+            )
         commands = [item["command"] for item in report.validation_commands[:4]]
         # Trim to budget
         while len(json.dumps({"summary": summary, "constraints": constraints, "commands": commands})) > max(600, token_budget * 4) and constraints:

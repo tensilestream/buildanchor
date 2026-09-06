@@ -69,9 +69,7 @@ class ValidationMixin:
         }
         if report.status == "invalid":
             status = "invalid"
-        elif not change.baseline_resolved or not change.change_detected:
-            status = "inconclusive"
-        elif not execute:
+        elif not change.baseline_resolved or not change.change_detected or not execute:
             status = "inconclusive"
         else:
             results = execution["results"]
@@ -140,25 +138,35 @@ class ValidationMixin:
             command = [str(item) for item in spec.get("command", [])]
             if not command:
                 continue
-            if not self._command_available(command):
-                results.append({"command": command, "status": "unavailable", "exit_code": None, "duration_ms": 0, "stdout": "", "stderr": "executable or wrapper is not available in the workspace"})
+            # Run where the command says it must run. Executing every probe at
+            # the repository root is the same fault the commands themselves had.
+            working_directory = str(spec.get("working_directory", ".") or ".")
+            directory = (self.workspace / working_directory).resolve()
+            if not directory.is_dir():
+                results.append({"command": command, "working_directory": working_directory, "status": "unavailable", "exit_code": None, "duration_ms": 0, "stdout": "", "stderr": f"working directory does not exist: {working_directory}"})
+                continue
+            self._assert_inside(directory)
+            if not self._command_available(command, directory):
+                results.append({"command": command, "working_directory": working_directory, "status": "unavailable", "exit_code": None, "duration_ms": 0, "stdout": "", "stderr": "executable or wrapper is not available in the workspace"})
                 continue
             started = time.monotonic()
             try:
-                completed = subprocess.run(command, cwd=self.workspace, capture_output=True, text=True, timeout=timeout_seconds, check=False, shell=False)
-                results.append({"command": command, "status": "passed" if completed.returncode == 0 else "failed", "exit_code": completed.returncode, "duration_ms": int((time.monotonic() - started) * 1000), "stdout": completed.stdout[-12000:], "stderr": completed.stderr[-12000:]})
+                completed = subprocess.run(command, cwd=directory, capture_output=True, text=True, timeout=timeout_seconds, check=False, shell=False)
+                results.append({"command": command, "working_directory": working_directory, "status": "passed" if completed.returncode == 0 else "failed", "exit_code": completed.returncode, "duration_ms": int((time.monotonic() - started) * 1000), "stdout": completed.stdout[-12000:], "stderr": completed.stderr[-12000:]})
             except subprocess.TimeoutExpired as exc:
-                results.append({"command": command, "status": "timed_out", "exit_code": None, "duration_ms": int((time.monotonic() - started) * 1000), "stdout": str(exc.stdout or "")[-12000:], "stderr": str(exc.stderr or "")[-12000:]})
+                results.append({"command": command, "working_directory": working_directory, "status": "timed_out", "exit_code": None, "duration_ms": int((time.monotonic() - started) * 1000), "stdout": str(exc.stdout or "")[-12000:], "stderr": str(exc.stderr or "")[-12000:]})
             except OSError as exc:
-                results.append({"command": command, "status": "failed", "exit_code": None, "duration_ms": int((time.monotonic() - started) * 1000), "stdout": "", "stderr": str(exc)})
+                results.append({"command": command, "working_directory": working_directory, "status": "failed", "exit_code": None, "duration_ms": int((time.monotonic() - started) * 1000), "stdout": "", "stderr": str(exc)})
         return {"mode": "probe", "commands_executed": [r["command"] for r in results if r["status"] != "unavailable"], "results": results, "network_used": "unknown", "limitations": ["Probe commands use shell=False, but selected build tools may resolve dependencies or run project-defined test code."]}
 
 
     # ------------------------------------------------------------------
-    def _command_available(self, command: list[str]) -> bool:
+    def _command_available(self, command: list[str], directory: Path | None = None) -> bool:
+        """Whether the command's entrypoint resolves, relative to its own directory."""
+        base = directory or self.workspace
         executable = command[0]
-        if executable.startswith("./"):
-            path = (self.workspace / executable[2:]).resolve()
+        if "/" in executable or "\\" in executable:
+            path = (base / executable).resolve()
             try:
                 path.relative_to(self.workspace)
             except ValueError:

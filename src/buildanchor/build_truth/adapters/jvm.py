@@ -36,7 +36,7 @@ class JvmAdapter:
             engine._fact("compatibility.persistence_namespace", "jakarta.persistence", path, evidence, facts)
 
     def find_package(self, engine: Any, name: str, show_usage: bool) -> list[dict]:
-        group, artifact = (name.split(":", 1) + [None])[:2] if ":" in name else (None, name)
+        group, artifact = name.split(":", 1) if ":" in name else (None, name)
         group, artifact = (group.lower() if group else None), artifact.lower()
         declared_version, declared_file = None, None
         for filename in ("pom.xml", "build.gradle", "build.gradle.kts"):

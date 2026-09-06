@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +13,26 @@ from typing import Any
 # Java / Jakarta rules (original)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Rule review horizon
+#
+# Every rule below encodes a fact about the world outside this repository:
+# which namespace Spring Boot 3 uses, which Rust edition is current, which
+# package is abandoned. Those facts move, and nothing in a codebase notices when
+# one stops being true — it simply keeps giving confident, outdated advice.
+#
+# Each rule therefore carries the date it was last confirmed, and a test fails
+# once any rule passes the horizon. The failure is the point: it forces someone
+# to re-confirm the claim rather than inherit it.
+# ---------------------------------------------------------------------------
+
+RULE_REVIEW_HORIZON_DAYS = 548  # 18 months
+
+
 _JAKARTA_RULES = (
     {
         "code": "JAKARTA_PERSISTENCE_NAMESPACE",
+        "reviewed": "2026-09-06",
         "legacy_prefix": "javax.persistence",
         "modern_prefix": "jakarta.persistence",
         "dependency": "jakarta.persistence:jakarta.persistence-api",
@@ -24,6 +42,7 @@ _JAKARTA_RULES = (
     },
     {
         "code": "JAKARTA_VALIDATION_NAMESPACE",
+        "reviewed": "2026-09-06",
         "legacy_prefix": "javax.validation",
         "modern_prefix": "jakarta.validation",
         "dependency": "jakarta.validation:jakarta.validation-api",
@@ -33,6 +52,7 @@ _JAKARTA_RULES = (
     },
     {
         "code": "JAKARTA_SERVLET_NAMESPACE",
+        "reviewed": "2026-09-06",
         "legacy_prefix": "javax.servlet",
         "modern_prefix": "jakarta.servlet",
         "dependency": "jakarta.servlet:jakarta.servlet-api",
@@ -49,6 +69,7 @@ _JAKARTA_RULES = (
 _PYTHON_RULES = (
     {
         "code": "PYTHON_SETUP_PY_ONLY",
+        "reviewed": "2026-09-06",
         "severity": "warning",
         "check": "setup_py_only",
         "message": "Project uses setup.py without pyproject.toml.",
@@ -57,6 +78,7 @@ _PYTHON_RULES = (
     },
     {
         "code": "PYTHON_DEPRECATED_DISTUTILS",
+        "reviewed": "2026-09-06",
         "severity": "error",
         "check": "distutils_import",
         "message": "distutils is imported directly. It was removed in Python 3.12.",
@@ -65,6 +87,7 @@ _PYTHON_RULES = (
     },
     {
         "code": "PYTHON_PKG_RESOURCES",
+        "reviewed": "2026-09-06",
         "severity": "warning",
         "check": "pkg_resources_import",
         "message": "pkg_resources is imported. Prefer importlib.resources (stdlib, Python 3.9+).",
@@ -80,6 +103,7 @@ _PYTHON_RULES = (
 _NODE_RULES = (
     {
         "code": "NODE_MISSING_EXPORTS_FIELD",
+        "reviewed": "2026-09-06",
         "severity": "warning",
         "check": "missing_exports",
         "message": 'package.json has "main" but no "exports" field — ESM consumers may fail.',
@@ -88,6 +112,7 @@ _NODE_RULES = (
     },
     {
         "code": "NODE_DEPRECATED_REQUEST_PACKAGE",
+        "reviewed": "2026-09-06",
         "severity": "error",
         "check": "deprecated_request",
         "message": 'The "request" package is deprecated (archived since 2020) and has unpatched CVEs.',
@@ -96,6 +121,7 @@ _NODE_RULES = (
     },
     {
         "code": "NODE_NATIVE_BUILD_DEPENDENCY",
+        "reviewed": "2026-09-06",
         "severity": "warning",
         "check": "node_gyp",
         "message": "node-gyp dependency detected. Native compilation required at install time.",
@@ -111,6 +137,7 @@ _NODE_RULES = (
 _GO_RULES = (
     {
         "code": "GO_PRE_MODULE_LAYOUT",
+        "reviewed": "2026-09-06",
         "severity": "error",
         "check": "no_go_mod",
         "message": "Go source files detected but no go.mod found. Pre-module layout is not supported by modern tooling.",
@@ -126,6 +153,7 @@ _GO_RULES = (
 _RUST_RULES = (
     {
         "code": "RUST_EDITION_2015",
+        "reviewed": "2026-09-06",
         "severity": "warning",
         "check": "rust_edition_2015",
         "message": "Cargo.toml uses the Rust 2015 edition. The 2021 edition adds important improvements.",
@@ -380,3 +408,31 @@ def _major_version(value: Any) -> int | None:
         return None
     match = re.search(r"\d+", str(value))
     return int(match.group(0)) if match else None
+
+
+def all_rules() -> tuple[dict, ...]:
+    """Every compatibility rule, across ecosystems."""
+    return (*_JAKARTA_RULES, *_PYTHON_RULES, *_NODE_RULES, *_GO_RULES, *_RUST_RULES)
+
+
+def stale_rules(today: date | None = None, horizon_days: int = RULE_REVIEW_HORIZON_DAYS) -> list[dict]:
+    """Return rules whose last review is older than the horizon.
+
+    ``today`` defaults to the current UTC date rather than the machine's local
+    one, so the horizon fires on the same day everywhere.
+    """
+    today = today or datetime.now(timezone.utc).date()
+    stale = []
+    for rule in all_rules():
+        reviewed = rule.get("reviewed")
+        if not reviewed:
+            stale.append(rule)
+            continue
+        try:
+            when = date.fromisoformat(str(reviewed))
+        except ValueError:
+            stale.append(rule)
+            continue
+        if (today - when).days > horizon_days:
+            stale.append(rule)
+    return stale

@@ -85,7 +85,7 @@ class MonorepoTests(unittest.TestCase):
 
             # Root command without scope
             root_cmd = engine.resolve_command("test")
-            self.assertEqual(root_cmd["command"], "pnpm run test")
+            self.assertEqual(root_cmd["command"], "pnpm test")
 
     def test_turborepo_scoping(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -229,11 +229,18 @@ class MonorepoTests(unittest.TestCase):
             modules = engine.discover_modules()
             self.assertEqual(len(modules), 2)
 
+            # Commands are relative to the module's own working directory.
+            # `npm --prefix frontend test` and `python -m pytest backend` left
+            # the working directory at the root, which is what broke them.
             ui_cmd = engine.resolve_command("test", scope="ui")
-            self.assertEqual(ui_cmd["command"], "npm --prefix frontend test")
+            self.assertEqual(ui_cmd["command"], "npm test")
+            self.assertEqual(ui_cmd["working_directory"], "frontend")
+            self.assertEqual(ui_cmd["command_shell"], "cd frontend && npm test")
 
             be_cmd = engine.resolve_command("test", scope="backend")
-            self.assertEqual(be_cmd["command"], "python -m pytest backend")
+            self.assertEqual(be_cmd["working_directory"], "backend")
+            self.assertNotIn("backend", be_cmd["command"].split()[1:])
+            self.assertTrue(be_cmd["command"].endswith("pytest"), be_cmd["command"])
 
     def test_changed_files_scoping_in_git(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

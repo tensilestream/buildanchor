@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
 
-from buildanchor import AsyncBuildAnchorClient, BuildAnchorClient, BuildAnchorHTTPError
+from buildanchor import AsyncBuildAnchorClient, BuildAnchorClient, BuildAnchorHTTPError, schema
 
 
 class SDKTests(unittest.TestCase):
@@ -17,7 +17,7 @@ class SDKTests(unittest.TestCase):
             (root / "package.json").write_text(json.dumps({"engines": {"node": ">=22"}}), encoding="utf-8")
             client = BuildAnchorClient(str(root))
             self.assertEqual(client.inspect()["status"], "valid")
-            self.assertEqual(client.context()["schema_version"], "v1")
+            self.assertEqual(client.context()["schema_version"], schema.CURRENT_SCHEMA)
             self.assertIn("content", client.llm_prompt("Add a feature"))
             self.assertIn("recommended_tool", client.token_estimate())
             self.assertTrue(client.preflight("Add a feature")["ready_to_act"])

@@ -13,9 +13,11 @@ import asyncio
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+from .build_truth.core.errors import BuildAnchorError
 from .engine import BuildAnchor
 from .transports import HTTP_ENDPOINTS
 
@@ -154,25 +156,62 @@ class BuildAnchorClient:
         return self._call("find-package", payload, lambda: self._engine.find_package(package, show_usage=show_usage, installed_only=installed_only))
 
     def modules(self) -> dict[str, Any]:
-        """Return discovered monorepo modules and their verified command metadata."""
+        """Return discovered monorepo modules, their working directories and commands.
+
+        Each module reports ``test_command_status``: how far its command has
+        actually been proven. Run ``verify_commands`` to raise it above
+        ``declared``.
+        """
         def local() -> dict[str, Any]:
             report = self._engine._inspect_cached()
             modules = self._engine.discover_modules()
             return {
                 "schema_version": "v1",
                 "session_id": report.session_id,
-                "is_monorepo": len(modules) > 1 or (len(modules) == 1 and modules[0].path != "."),
+                "is_monorepo": bool((report.repository or {}).get("is_monorepo", False)),
                 "modules": [module.to_dict() for module in modules],
             }
 
         return self._call("modules", {}, local)
 
     def resolve_command(self, phase: str = "test", *, scope: str | None = None, changed: bool = False) -> dict[str, Any]:
-        """Resolve the verified command for a build phase and optional monorepo scope."""
+        """Resolve the command for a build phase and optional monorepo scope.
+
+        The result carries ``working_directory`` (run the command there, not at
+        the repository root) and ``command_status`` (how far it is proven).
+        """
         return self._call(
             "cmd",
             {"phase": phase, "scope": scope, "changed": changed},
             lambda: self._engine.resolve_command(phase, scope=scope, changed=changed),
+        )
+
+    def diagnose(self, path: str | None = None) -> dict[str, Any]:
+        """Explain the repository, or why one directory is not a module."""
+        return self._call("doctor", {"path": path}, lambda: self._engine.diagnose(path))
+
+    def verify_commands(
+        self,
+        level: str = "collects",
+        *,
+        scope: str | None = None,
+        timeout_seconds: int | None = None,
+        use_cache: bool = True,
+    ) -> dict[str, Any]:
+        """Climb the verification ladder for each module's test command.
+
+        Local-only: verification executes project-defined code, so it is
+        deliberately not routed over HTTP or exposed as an MCP tool. See
+        ``buildanchor.build_truth.core.verification_levels`` for the rungs.
+        """
+        if self.endpoint:
+            raise BuildAnchorError(
+                "verify_commands is local-only: it executes project-defined code, "
+                "which a remote caller cannot consent to. Run it against a local workspace."
+            )
+        return self._engine.verify_commands(
+            level=level, scope=scope, timeout_seconds=timeout_seconds,
+            use_cache=use_cache, write_cache=use_cache,
         )
 
     def _explain_local(self, dependency: str) -> dict[str, Any]:
@@ -218,7 +257,7 @@ class AsyncBuildAnchorClient:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._client = BuildAnchorClient(*args, **kwargs)
 
-    async def __aenter__(self) -> "AsyncBuildAnchorClient":
+    async def __aenter__(self) -> AsyncBuildAnchorClient:
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> bool:
@@ -277,6 +316,22 @@ class AsyncBuildAnchorClient:
 
     async def resolve_command(self, phase: str = "test", *, scope: str | None = None, changed: bool = False) -> dict[str, Any]:
         return await asyncio.to_thread(self._client.resolve_command, phase, scope=scope, changed=changed)
+
+    async def diagnose(self, path: str | None = None) -> dict[str, Any]:
+        return await asyncio.to_thread(self._client.diagnose, path)
+
+    async def verify_commands(
+        self,
+        level: str = "collects",
+        *,
+        scope: str | None = None,
+        timeout_seconds: int | None = None,
+        use_cache: bool = True,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._client.verify_commands, level,
+            scope=scope, timeout_seconds=timeout_seconds, use_cache=use_cache,
+        )
 
 
 __all__ = [

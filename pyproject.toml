@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "buildanchor"
-version = "1.1.6"
+version = "1.9.0"
 description = "Local-first Build Truth and change validation for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -59,6 +59,42 @@ Changelog = "https://github.com/tensilestream/buildanchor/blob/main/CHANGELOG.md
 
 [project.scripts]
 buildanchor = "buildanchor.cli:main"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# Fixtures are deliberately imperfect sample projects, not source.
+extend-exclude = ["benchmarks/fixtures"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F",      # pycodestyle errors, pyflakes — real defects
+    "I",           # import ordering
+    "B",           # bugbear: likely bugs
+    "UP",          # pyupgrade
+    "SIM",         # simplifications
+    "RUF",         # ruff-specific
+    "DTZ",         # naive datetimes
+    "PLE",         # pylint errors
+]
+ignore = [
+    # BuildAnchor runs build tools on purpose; every call site uses a fixed
+    # argument vector, shell=False and a timeout, which is the actual mitigation.
+    "S603", "S607",
+    # Long, deliberate explanatory strings in reports and diagnostics.
+    "E501",
+    # Short guard clauses on one line are the house style in the adapters, which
+    # are dense lookup code. Reformatting five working files to satisfy a style
+    # rule is not a fix.
+    "E701",
+    # A nested `if` is often clearer than a compound condition when the two
+    # checks mean different things.
+    "SIM102",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on behaviour; a broad except is often the assertion.
+"tests/*" = ["B017", "SIM117"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

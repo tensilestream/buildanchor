@@ -1,10 +1,12 @@
 import io
 import json
+import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
-from buildanchor.transports import MCPServer
+from buildanchor.transports import MCPServer, advertised_tools
 
 
 class TransportTests(unittest.TestCase):
@@ -52,7 +54,34 @@ class TransportTests(unittest.TestCase):
             output_stream = io.StringIO()
             MCPServer(str(root)).run(input_stream, output_stream)
             payload = json.loads(output_stream.getvalue())
-            self.assertTrue(any(tool["name"] == "build.context" for tool in payload["result"]["tools"]))
+            listed = [tool["name"] for tool in payload["result"]["tools"]]
+            # tools/list advertises the three core tools by default: every
+            # advertised schema is resident in the agent's context on every turn.
+            self.assertEqual(listed, ["get_build_truth", "get_test_command", "find_package"])
+            self.assertNotIn("build.context", listed)
+
+    def test_mcp_tools_list_full_mode_restores_extended_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "go.mod").write_text("module example.com/app\ngo 1.23\n", encoding="utf-8")
+            with unittest.mock.patch.dict(os.environ, {"BUILDANCHOR_MCP_TOOLS": "full"}):
+                response = MCPServer(str(root)).handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+            listed = [tool["name"] for tool in response["result"]["tools"]]
+            self.assertIn("build.context", listed)
+            self.assertGreater(len(listed), 3)
+
+    def test_extended_tools_stay_dispatchable_when_unadvertised(self) -> None:
+        """Trimming the listing must not break a caller that knows the name."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "go.mod").write_text("module example.com/app\ngo 1.23\n", encoding="utf-8")
+            server = MCPServer(str(root))
+            self.assertNotIn("build.context", [t["name"] for t in advertised_tools()])
+            response = server.handle({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "build.context", "arguments": {}},
+            })
+            self.assertIn("result", response)
 
     def test_mcp_rejects_workspace_escape(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -90,7 +119,7 @@ class TransportTests(unittest.TestCase):
                 "params": {"name": "build.cmd", "arguments": {"phase": "test"}}
             })
             content = response["result"]["structuredContent"]
-            self.assertEqual(content["command"], "npm run test")
+            self.assertEqual(content["command"], "npm test")
             self.assertEqual(content["phase"], "test")
 
     def test_mcp_core_tool_aliases_and_resources(self) -> None:
@@ -113,7 +142,7 @@ class TransportTests(unittest.TestCase):
 
             # Test get_test_command alias
             cmd = server.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "get_test_command", "arguments": {}}})
-            self.assertEqual(cmd["result"]["structuredContent"]["command"], "npm run test")
+            self.assertEqual(cmd["result"]["structuredContent"]["command"], "npm test")
 
 
 if __name__ == "__main__":

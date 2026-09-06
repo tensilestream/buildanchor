@@ -8,13 +8,15 @@ import json
 import os
 import shutil
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Callable, TextIO
+from typing import Any, TextIO
 
+from . import schema as schema_module
 from .engine import BuildAnchor, BuildAnchorError
-from .transports import MCPServer, serve_http
+from .transports import MCPServer, advertised_tools, serve_http
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,239 @@ def _should_render_cli_banner(args: argparse.Namespace) -> bool:
     )
 
 
+def _proven_label(module: dict) -> str:
+    """Describe how far a module's test command is proven, without overstating.
+
+    Reaching a rung is not the same as a clean result: a command whose discovery
+    probe failed reached ``resolvable``, and printing only that would read as an
+    endorsement.
+    """
+    status = module.get("test_command_status", "declared")
+    outcome = module.get("test_command_outcome", status)
+    if outcome == "failed":
+        return f"{status}, then FAILED"
+    if outcome == "skipped":
+        return f"{status} (no probe available)"
+    return status
+
+
+#: Guidance files that coding agents read without being asked. Different tools
+#: read different names, and a repository often carries more than one.
+AGENT_RULES_FILENAMES: tuple[str, ...] = ("CLAUDE.md", "AGENTS.md", "AGENT.md", "GEMINI.md")
+
+#: Written when a repository has none of the above. AGENTS.md is the
+#: cross-agent convention, so it reaches the most tools with one file.
+DEFAULT_AGENT_RULES_FILENAME = "AGENTS.md"
+
+RULES_MARKER = "<!-- BuildAnchor Rules Block -->"
+RULES_END_MARKER = "<!-- End BuildAnchor Rules Block -->"
+
+
+COMMAND_HELP = """\
+start here
+  init                  Write the build commands into this repo's agent guidance
+                        file (CLAUDE.md / AGENTS.md). Add --verify to prove them.
+  cmd test              Print the test command. Add --explain for the working
+                        directory and how far it is proven.
+  verify                Execute a discovery-only probe per module and record
+                        which commands genuinely run.
+  doctor [PATH]         Explain what was found, or why a directory is not
+                        reported as a module.
+
+day to day
+  modules               List every project, its working directory and command.
+  find --package NAME   Is this package already installed, declared, imported?
+  inspect               The full report: modules, dependencies, evidence.
+  context               A compact block to inject into an agent's prompt.
+
+change validation
+  change-impact         What changed against a git baseline.
+  validate-change       Validate a change; --execute runs the probes.
+  compatibility         Ecosystem rules that catch incompatible edits.
+  repair                Guidance for a failed validation.
+
+running as a server
+  mcp --stdio           Model Context Protocol server for agents.
+  serve                 HTTP server.
+  setup-mcp             Register with Claude Code, Cursor, Copilot, Codex.
+
+examples
+  buildanchor init --verify
+  buildanchor cmd test --scope ui --explain
+  buildanchor verify --verify-level passes --jobs 8
+  buildanchor doctor packages/web
+  buildanchor init --check          # exit 1 if the guidance has gone stale
+"""
+
+
+def _modules_envelope(engine: BuildAnchor, modules: list) -> dict:
+    """The one module-listing contract, shared by the CLI, HTTP, MCP and SDKs."""
+    report = engine._inspect_cached()
+    return {
+        "schema_version": report.schema_version,
+        "session_id": report.session_id,
+        "is_monorepo": bool((report.repository or {}).get("is_monorepo", False)),
+        "modules": [module.to_dict() for module in modules],
+    }
+
+
+def _agent_rules_files(workspace: Path, override: str | None = None) -> list[Path]:
+    """Return every guidance file that should carry the block.
+
+    All of them, not one. Picking a single file leaves any other agent file in
+    the repository holding an older copy, and a stale build instruction is worse
+    than none because an agent will trust it. Whichever file a given tool reads,
+    it gets the same answer.
+    """
+    if override:
+        return [(workspace / override).resolve()]
+    existing = [workspace / name for name in AGENT_RULES_FILENAMES if (workspace / name).is_file()]
+    # Also refresh any other file that already carries the block, so a file
+    # renamed or added by hand does not drift.
+    for candidate in sorted(workspace.glob("*.md")):
+        if candidate in existing or not candidate.is_file():
+            continue
+        try:
+            if RULES_MARKER in candidate.read_text(encoding="utf-8", errors="replace"):
+                existing.append(candidate)
+        except OSError:
+            continue
+    return existing or [workspace / DEFAULT_AGENT_RULES_FILENAME]
+
+
+def _apply_rule_block(path: Path, block: str) -> str:
+    """Write ``block`` into ``path``, refreshing in place. Returns the action taken."""
+    if not path.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Agent Guidelines\n\n" + block, encoding="utf-8")
+        return "created"
+    existing = path.read_text(encoding="utf-8", errors="replace")
+    if RULES_MARKER in existing and RULES_END_MARKER in existing:
+        head, _, tail = existing.partition(RULES_MARKER)
+        _, _, after = tail.partition(RULES_END_MARKER)
+        updated = head.rstrip("\n") + "\n" + block + after
+        if updated == existing:
+            return "unchanged"
+        path.write_text(updated, encoding="utf-8")
+        return "refreshed"
+    path.write_text(existing.rstrip("\n") + "\n\n" + block, encoding="utf-8")
+    return "appended"
+
+
+def _remove_rule_block(path: Path) -> bool:
+    """Strip BuildAnchor's block from ``path``, keeping everything else."""
+    if not path.is_file():
+        return False
+    existing = path.read_text(encoding="utf-8", errors="replace")
+    if RULES_MARKER not in existing or RULES_END_MARKER not in existing:
+        return False
+    head, _, tail = existing.partition(RULES_MARKER)
+    _, _, after = tail.partition(RULES_END_MARKER)
+    remaining = (head.rstrip() + "\n" + after.lstrip("\n")).strip()
+    if remaining in ("", "# Agent Guidelines"):
+        # The file existed only to hold the block; leave nothing behind.
+        path.unlink()
+        return True
+    path.write_text(remaining + "\n", encoding="utf-8")
+    return True
+
+
+def _rule_block_is_current(path: Path, block: str) -> bool:
+    """Whether ``path`` already carries exactly this block."""
+    if not path.is_file():
+        return False
+    existing = path.read_text(encoding="utf-8", errors="replace")
+    if RULES_MARKER not in existing or RULES_END_MARKER not in existing:
+        return False
+    start = existing.index(RULES_MARKER)
+    end = existing.index(RULES_END_MARKER) + len(RULES_END_MARKER)
+    return existing[start:end].strip() == block.strip()
+
+
+def _agent_rule_block(report: Any, phases: dict, shape: str) -> str:
+    """Render the block injected into the repository's agent guidance file.
+
+    This is the highest-leverage surface BuildAnchor has: agents read these
+    files unprompted, every session, with no decision to make and no tool to
+    call. So the block states the commands and where they run, says how far each
+    is proven, and stops — advice that does not apply to this repository is
+    noise, and noise makes an agent discount the rest.
+    """
+    lines = ["<!-- BuildAnchor Rules Block -->", "## Build and test commands (BuildAnchor)", ""]
+
+    test = phases.get("test", {})
+    if test.get("command"):
+        where = test.get("working_directory", ".")
+        status = test.get("command_status", "declared")
+        lines.append("Run the tests with:")
+        lines.append("")
+        lines.append("```bash")
+        lines.append(test.get("command_shell") or (
+            test["command"] if where == "." else f"cd {where} && {test['command']}"
+        ))
+        lines.append("```")
+        lines.append("")
+        if status == "declared":
+            lines.append(
+                "This command is **declared** — read from a manifest, not yet executed. "
+                "Run `buildanchor verify` to prove it runs before relying on it."
+            )
+        else:
+            lines.append(
+                f"Verified: this command reached **{status}** on the current manifests "
+                "(`buildanchor verify`). It re-checks itself when a manifest changes."
+            )
+        lines.append("")
+
+    for phase in ("build", "lint", "format"):
+        resolved = phases.get(phase, {})
+        if resolved.get("command"):
+            where = resolved.get("working_directory", ".")
+            suffix = "" if where == "." else f"  (run in `{where}`)"
+            lines.append(f"- **{phase}**: `{resolved['command']}`{suffix}")
+    if lines[-1] != "":
+        lines.append("")
+
+    if shape == "monorepo" and report.module_details:
+        lines.append(f"This is a monorepo of {len(report.module_details)} modules. "
+                     "Do not run the whole suite; target what you changed:")
+        lines.append("")
+        lines.append("```bash")
+        lines.append("buildanchor cmd test --changed          # only modules with git changes")
+        lines.append("buildanchor cmd test --scope ui         # or: backend, shared, <module name>")
+        lines.append("```")
+        lines.append("")
+        lines.append("| Module | Runs in | Test command | Proven |")
+        lines.append("| --- | --- | --- | --- |")
+        for module in report.module_details[:12]:
+            if module.get("test_command"):
+                lines.append(
+                    f"| `{module.get('name')}` | `{module.get('working_directory', '.')}` "
+                    f"| `{module['test_command']}` | {_proven_label(module)} |"
+                )
+        lines.append("")
+        lines.append("`declared` means read from a manifest and not executed. "
+                     "Run `buildanchor verify` to raise it.")
+        lines.append("")
+    elif shape == "root-plus-satellites" and report.module_details:
+        satellites = ", ".join(f"`{m.get('path')}`" for m in report.module_details[:6])
+        lines.append(f"One project at the root, with subordinate package(s): {satellites}. "
+                     "The command above is the root project's.")
+        lines.append("")
+    elif shape == "single-project":
+        lines.append("Single-project repository: one test command, no scoping needed.")
+        lines.append("")
+
+    lines.append("Before adding a dependency, check whether it is already present:")
+    lines.append("")
+    lines.append("```bash")
+    lines.append("buildanchor find --package <name>")
+    lines.append("```")
+    lines.append("")
+    lines.append("<!-- End BuildAnchor Rules Block -->")
+    return "\n".join(lines) + "\n"
+
+
 def _render_cli_banner(output: TextIO | None = None) -> None:
     """Render the terminal wordmark once at the start of a human CLI session."""
     output = output or sys.stdout
@@ -69,15 +304,26 @@ def _render_cli_banner(output: TextIO | None = None) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="buildanchor",
-        description="BuildAnchor: local-first Build Truth for AI coding agents.",
+        # A wall of thirty flags before the first useful line is not a usage
+        # string; the commands are what a reader needs first.
+        usage="buildanchor COMMAND [--workspace PATH] [--format json|text|markdown] [options]",
+        description=(
+            "BuildAnchor tells you the command that builds and tests this repository,\n"
+            "the directory it must run in, and whether it actually runs.\n"
+            "Local-first, offline, no LLM calls."
+        ),
+        epilog=COMMAND_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "command",
+        metavar="COMMAND",
+        help="One of the commands listed below.",
         choices=[
             "llm-prompt", "token-estimate",
             "inspect", "context", "preflight", "plan",
             "change-impact", "validate-change", "repair", "compatibility",
-            "explain-dependency", "find", "cmd", "modules", "init",
+            "explain-dependency", "find", "cmd", "modules", "verify", "doctor", "init",
             "mcp", "serve", "setup-copilot", "setup-mcp",
         ],
     )
@@ -134,6 +380,34 @@ def _parser() -> argparse.ArgumentParser:
                         help="Assert that the workspace matches the expected ecosystem. Exit 3 on mismatch.")
     parser.add_argument("--only-errors", action="store_true",
                         help="Remove warnings, show only blocking errors.")
+    parser.add_argument("--schema", default=schema_module.CURRENT_SCHEMA,
+                        help=f"Report schema to emit. Supported: {', '.join(schema_module.SUPPORTED_SCHEMAS)}. "
+                             f"Default: {schema_module.CURRENT_SCHEMA}. 'v1' is deprecated and removed at 2.0.")
+    parser.add_argument("--rules-file",
+                        help="With 'init': write the agent guidance block to this file only.")
+    parser.add_argument("--list-tools", action="store_true",
+                        help="With 'mcp': print the tool schemas as JSON and exit. For building an agent.")
+    parser.add_argument("--call-tool", default=None,
+                        help="With 'mcp': execute one tool by name and print its result as JSON.")
+    parser.add_argument("--tool-input", default="{}",
+                        help="JSON object of arguments for --call-tool.")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="With 'init': print exactly what would be written and change nothing.")
+    parser.add_argument("--undo", action="store_true",
+                        help="With 'init': remove everything 'init' wrote, keeping your own content.")
+    parser.add_argument("--check", action="store_true",
+                        help="With 'init': report whether the agent guidance block matches the "
+                             "repository and exit 1 if it is stale. Changes nothing. For CI and hooks.")
+    parser.add_argument("--verify", action="store_true",
+                        help="With 'init': run 'verify' first so the written commands carry a proven status.")
+    parser.add_argument("--verify-level", default="collects", choices=["resolvable", "collects", "passes"],
+                        help="How far 'verify' should climb the ladder. 'resolvable' executes nothing, "
+                             "'collects' runs a discovery-only probe, 'passes' runs the full suite.")
+    parser.add_argument("--jobs", type=int, default=None,
+                        help="With 'verify': how many modules to probe concurrently. "
+                             "Default: the machine's parallelism, capped at 8.")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="Ignore and do not write .buildanchor/verified.json.")
     parser.add_argument("--explain", action="store_true",
                         help="Add a plain-English 'why:' explanation to each finding.")
     parser.add_argument("--staged", action="store_true",
@@ -662,7 +936,23 @@ def main(argv: list[str] | None = None) -> int:
             _render_cli_banner()
 
         if args.command == "mcp":
-            MCPServer(args.allow_root or args.workspace).run(sys.stdin, sys.stdout)
+            server = MCPServer(args.allow_root or args.workspace)
+            # Two non-protocol modes, so an SDK can build an agent on top of
+            # BuildAnchor without speaking MCP over a pipe. The schemas are the
+            # same ones `tools/list` advertises — there is no second definition.
+            if getattr(args, "list_tools", False):
+                print(json.dumps(advertised_tools(), indent=2))
+                return 0
+            if getattr(args, "call_tool", None):
+                try:
+                    tool_input = json.loads(args.tool_input or "{}")
+                except json.JSONDecodeError as exc:
+                    raise BuildAnchorError(f"--tool-input is not valid JSON: {exc}") from exc
+                if not isinstance(tool_input, dict):
+                    raise BuildAnchorError("--tool-input must be a JSON object")
+                print(json.dumps(server.call_tool(args.call_tool, tool_input), indent=2))
+                return 0
+            server.run(sys.stdin, sys.stdout)
             return 0
 
         engine = BuildAnchor(args.workspace, args.allow_root)
@@ -749,7 +1039,7 @@ def main(argv: list[str] | None = None) -> int:
             if getattr(args, "list", False):
                 modules = engine.discover_modules()
                 if args.format == "json":
-                    print(json.dumps([m.to_dict() for m in modules], indent=2))
+                    print(json.dumps(_modules_envelope(engine, modules), indent=2))
                 else:
                     if not modules:
                         print("No monorepo modules detected (single-project repository).")
@@ -757,9 +1047,11 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"Monorepo modules ({len(modules)} found):")
                         for m in modules:
                             cat_upper = m.category.upper()
-                            t_cmd = f" | test: {m.test_command}" if m.test_command else ""
-                            b_cmd = f" | build: {m.build_command}" if m.build_command else ""
-                            print(f"  - {m.name} ({m.path}) [{cat_upper}]{t_cmd}{b_cmd}")
+                            print(f"  - {m.name} ({m.path}) [{cat_upper}]")
+                            if m.test_command:
+                                print(f"      test : {m.test_command}  (in {m.working_directory}, {m.test_command_status})")
+                            if m.build_command:
+                                print(f"      build: {m.build_command}  (in {m.working_directory})")
                         print("\nAvailable scopes:")
                         print("  --scope ui        (Frontend/Web/Client packages)")
                         print("  --scope backend   (API/Server/Service packages)")
@@ -780,6 +1072,8 @@ def main(argv: list[str] | None = None) -> int:
                             print(f"scope: {resolved.get('scope')}")
                         if resolved.get("changed"):
                             print("changed: True")
+                        print(f"working_directory: {resolved.get('working_directory', '.')}")
+                        print(f"status: {resolved.get('command_status', 'declared')}")
                         if resolved.get("reason"):
                             print(f"reason: {resolved.get('reason')}")
                         if resolved.get("targeted_modules"):
@@ -791,10 +1085,114 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"# No {phase} command detected", file=sys.stderr)
             return 0 if resolved.get("command") else 2
 
+        if args.command == "doctor":
+            target = args.phase_arg or getattr(args, "scope", None)
+            result = engine.diagnose(target)
+            if args.format == "json":
+                print(json.dumps(result, indent=2, sort_keys=True))
+            elif target:
+                print(f"{result['path']}: {result['reason']}")
+                if result.get("markers"):
+                    print(f"  markers found: {', '.join(result['markers'])}")
+                considered = result.get("considered") or {}
+                if (not considered.get("included", True)
+                        and considered.get("reason", "") not in result.get("reason", "")):
+                    print(f"  not considered: {considered['reason']}")
+                module = result.get("module")
+                if module:
+                    print(f"  ecosystem: {module.get('ecosystem')}")
+                    print(f"  test: {module.get('test_command')}  (in {module.get('working_directory')})")
+                    print(f"  proven: {_proven_label(module)}")
+                for suggestion in result.get("suggestions", []):
+                    print(f"  -> {suggestion}")
+            else:
+                repository = result.get("repository") or {}
+                print(f"Repository: {repository.get('shape', 'unknown')} — {repository.get('reason', '')}")
+                print(f"Build systems: {', '.join(result['build_systems']) or 'none detected'}")
+                print(f"Languages: {', '.join(result['languages']) or 'none detected'}")
+                if result.get("declared_runners"):
+                    print(f"Task runners you declare: {', '.join(result['declared_runners'])} "
+                          "(these take precedence)")
+                for phase, entry in (result.get("commands") or {}).items():
+                    location = "" if entry["working_directory"] == "." else f"  in {entry['working_directory']}"
+                    print(f"\n{phase.capitalize()}: {entry['command']}{location}")
+                    print(f"  from {entry['source']} — {entry['status']}")
+                if result["modules"]:
+                    print(f"\nModules ({len(result['modules'])}):")
+                    for module in result["modules"]:
+                        print(f"  {module['path']:24} {module['ecosystem']:8} "
+                              f"{_proven_label({'test_command_status': module['status'], 'test_command_outcome': module['outcome']})}")
+                if result["findings"]:
+                    print("\nFindings:")
+                    for finding in result["findings"]:
+                        print(f"  [{finding['severity']}] {finding['detail']}")
+                else:
+                    print("\nNothing to report.")
+                print("\nAsk about one directory with: buildanchor doctor <path>")
+            return 0 if result["status"] == "valid" else (1 if result["status"] == "invalid" else 2)
+
+        if args.command == "verify":
+            result = engine.verify_commands(
+                level=args.verify_level,
+                scope=args.scope,
+                timeout_seconds=args.timeout if args.timeout != 300 else None,
+                use_cache=not args.no_cache,
+                write_cache=not args.no_cache,
+                jobs=args.jobs,
+                dry_run=getattr(args, "dry_run", False),
+            )
+            if result.get("dry_run"):
+                if args.format == "json":
+                    print(json.dumps(result, indent=2, sort_keys=True))
+                else:
+                    print(f"Would verify to level '{result['requested_level']}'. "
+                          f"Nothing is executed by this command.\n")
+                    for entry in result["plan"]:
+                        print(f"  {entry['name']} ({entry['path']}) — in {entry['working_directory']}")
+                        for step in entry["would_run"]:
+                            print(f"      {step['rung']:10} {step['command']}")
+                        if entry.get("note"):
+                            print(f"      note       {entry['note']}")
+                    print("\nRe-run without --dry-run to execute these.")
+                return 0
+            if args.format == "json":
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                print(f"Verifying test commands to level '{result['requested_level']}' "
+                      f"({result['modules_verified']} module(s)):\n")
+                for item in result["results"]:
+                    mark = {"passes": "PASSES", "collects": "COLLECTS", "resolvable": "RESOLVABLE",
+                            "declared": "DECLARED", "skipped": "SKIPPED", "failed": "FAILED"}
+                    label = mark.get(item["outcome"], item["outcome"].upper())
+                    cached = " (cached)" if item.get("cached") else ""
+                    print(f"  [{label}]{cached} {item['name']} ({item['path']})")
+                    if item.get("command"):
+                        print(f"      command: {item['command']}")
+                        print(f"      run in : {item['working_directory']}")
+                    if item.get("reason"):
+                        print(f"      reason : {item['reason']}")
+                    for rung in item.get("rungs", []):
+                        if rung.get("passed") is False and rung.get("output_tail"):
+                            tail = rung["output_tail"].strip().splitlines()[-4:]
+                            for line in tail:
+                                print(f"      | {line}")
+                    print()
+                proven = result["modules_at_collects_or_better"]
+                print(f"{proven}/{result['modules_verified']} module(s) verified at 'collects' or better.")
+                if result.get("workers", 1) > 1 and result.get("wall_clock_saved_ms"):
+                    print(f"Probed {result['workers']} modules at a time; "
+                          f"{result['wall_clock_saved_ms'] / 1000:.1f}s faster than one at a time.")
+                if not args.no_cache:
+                    print(f"Recorded in {result['cache_path']}; later inspect/cmd calls report it without re-running.")
+            return 0 if result["status"] == "valid" else (1 if result["status"] == "invalid" else 2)
+
         if args.command == "modules":
             modules = engine.discover_modules()
             if args.format == "json":
-                print(json.dumps([m.to_dict() for m in modules], indent=2))
+                # The same envelope every other surface returns. A bare array
+                # here meant an SDK saw a different shape in local mode than
+                # over HTTP — the same call, the same tool, two contracts.
+                print(json.dumps(_modules_envelope(engine, modules), indent=2))
             else:
                 if not modules:
                     print("No monorepo modules detected (single-project repository).")
@@ -802,9 +1200,13 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"Monorepo modules ({len(modules)} found):")
                     for m in modules:
                         cat_upper = m.category.upper()
-                        t_cmd = f" | test: {m.test_command}" if m.test_command else ""
-                        b_cmd = f" | build: {m.build_command}" if m.build_command else ""
-                        print(f"  - {m.name} ({m.path}) [{cat_upper}]{t_cmd}{b_cmd}")
+                        print(f"  - {m.name} ({m.path}) [{cat_upper}]")
+                        if m.test_command:
+                            print(f"      test : {m.test_command}  (in {m.working_directory}, {m.test_command_status})")
+                        if m.build_command:
+                            print(f"      build: {m.build_command}  (in {m.working_directory})")
+                    print("\nCommands are relative to each module's working directory.")
+                    print("Prove they run with:  buildanchor verify")
                     print("\nRun targeted tests with:")
                     print("  buildanchor cmd test --scope ui")
                     print("  buildanchor cmd test --scope backend")
@@ -814,56 +1216,134 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "init":
             report = engine._inspect_cached()
-            test_cmd = engine.resolve_command("test").get("command")
-            build_cmd = engine.resolve_command("build").get("command")
-            lint_cmd = engine.resolve_command("lint").get("command")
-            format_cmd = engine.resolve_command("format").get("command")
+            phases = {phase: engine.resolve_command(phase) for phase in ("test", "build", "lint", "format")}
+            test_resolved = phases["test"]
+            test_cmd = test_resolved.get("command")
+            shape = (report.repository or {}).get("shape", "unknown")
 
-            # 1. Write .buildanchor.json
+            # Verify whenever there is anything to verify. Gating on a root
+            # command skipped verification entirely in a monorepo with no root
+            # project — precisely the case where it matters most.
+            if getattr(args, "verify", False) and (test_cmd or report.module_details):
+                engine.verify_commands(level=args.verify_level)
+                report = engine.inspect()
+                phases = {phase: engine.resolve_command(phase) for phase in ("test", "build", "lint", "format")}
+                test_resolved = phases["test"]
+
             config_path = engine.workspace / ".buildanchor.json"
             config_data = {
-                "version": "1.0",
+                "version": "1.1",
                 "build_systems": report.build_systems,
                 "languages": report.languages,
-                "verified_commands": {
-                    "test": test_cmd,
-                    "build": build_cmd,
-                    "lint": lint_cmd,
-                    "format": format_cmd,
+                "repository": report.repository,
+                "commands": {
+                    phase: {
+                        "command": resolved.get("command"),
+                        "working_directory": resolved.get("working_directory", "."),
+                        "status": resolved.get("command_status", "declared"),
+                    }
+                    for phase, resolved in phases.items()
                 },
+                "modules": [
+                    {
+                        "name": module.get("name"),
+                        "path": module.get("path"),
+                        "working_directory": module.get("working_directory", "."),
+                        "test_command": module.get("test_command"),
+                        "test_command_status": module.get("test_command_status", "declared"),
+                    }
+                    for module in report.module_details
+                ],
+                # Retained under its historical name for existing readers.
+                "verified_commands": {phase: resolved.get("command") for phase, resolved in phases.items()},
                 "policy": "allow",
             }
-            config_path.write_text(json.dumps(config_data, indent=2) + "\n", encoding="utf-8")
+            rule_block = _agent_rule_block(report, phases, shape)
+            rules_files = _agent_rules_files(engine.workspace, getattr(args, "rules_file", None))
 
-            # 2. Append/create AGENT.md or CLAUDE.md
-            rule_block = (
-                "\n<!-- BuildAnchor Rules Block -->\n"
-                "## Build Truth & Verification (BuildAnchor)\n"
-                "Always run buildanchor preflight before modifying configuration or installing dependencies:\n"
-                "```bash\n"
-                "buildanchor preflight --agent\n"
-                "```\n"
-                "To search for installed packages and import patterns:\n"
-                "```bash\n"
-                "buildanchor find --package <package-name>\n"
-                "```\n"
-                "To run verified tests:\n"
-                f"```bash\n"
-                f"{test_cmd or 'buildanchor cmd test'}\n"
-                "```\n"
-                "<!-- End BuildAnchor Rules Block -->\n"
-            )
+            if not getattr(args, "dry_run", False):
+                # Written after the dry-run check, because a dry run that writes
+                # a file is not a dry run.
+                config_path.write_text(json.dumps(config_data, indent=2) + "\n", encoding="utf-8")
 
-            rules_file = engine.workspace / "CLAUDE.md"
-            if not rules_file.is_file():
-                rules_file = engine.workspace / "AGENT.md"
+            if getattr(args, "undo", False):
+                # Everything `init` writes, removed. A tool that edits the file
+                # agents read has to be trivially reversible, or a careful team
+                # will simply not run it.
+                removed: list[str] = []
+                for path in _agent_rules_files(engine.workspace, getattr(args, "rules_file", None)):
+                    if _remove_rule_block(path):
+                        removed.append(str(path.relative_to(engine.workspace)))
+                config_path = engine.workspace / ".buildanchor.json"
+                if config_path.is_file():
+                    config_path.unlink()
+                    removed.append(config_path.name)
+                payload = {"status": "removed", "removed": removed}
+                if args.format == "json":
+                    print(json.dumps(payload, indent=2))
+                elif removed:
+                    for item in removed:
+                        print(f"removed BuildAnchor content from {item}")
+                    record = engine.workspace / ".buildanchor" / "verified.json"
+                    if record.is_file():
+                        print(f"\nLeft in place: {record.relative_to(engine.workspace)} — "
+                              "that is verification evidence, written by 'verify', not by 'init'.")
+                else:
+                    print("Nothing of BuildAnchor's to remove.")
+                return 0
 
-            if rules_file.is_file():
-                existing = rules_file.read_text(encoding="utf-8", errors="replace")
-                if "<!-- BuildAnchor Rules Block -->" not in existing:
-                    rules_file.write_text(existing + rule_block, encoding="utf-8")
-            else:
-                rules_file.write_text("# Agent Guidelines\n" + rule_block, encoding="utf-8")
+            if getattr(args, "check", False):
+                # CI / pre-commit mode: report drift, change nothing. A block
+                # that no longer matches the repository is the failure worth
+                # catching, because an agent has no way to notice it is stale.
+                stale = [f for f in rules_files if not _rule_block_is_current(f, rule_block)]
+                payload = {
+                    "status": "stale" if stale else "current",
+                    "checked": [str(f.relative_to(engine.workspace)) for f in rules_files],
+                    "stale": [str(f.relative_to(engine.workspace)) for f in stale],
+                }
+                if args.format == "json":
+                    print(json.dumps(payload, indent=2))
+                elif stale:
+                    for path in payload["stale"]:
+                        print(f"stale: {path} does not match this repository's build truth", file=sys.stderr)
+                    print("Run 'buildanchor init' to refresh.", file=sys.stderr)
+                else:
+                    print(f"Agent guidance is current ({', '.join(payload['checked'])}).")
+                return 1 if stale else 0
+
+            # Every agent file gets the same block. Updating only one leaves the
+            # others holding an older answer, and an agent will trust whichever
+            # one its tool happens to read.
+            if getattr(args, "dry_run", False):
+                # Show exactly what would be written, change nothing. "What will
+                # this do to my repository?" should be answerable without
+                # finding out the hard way.
+                planned = {
+                    str(path.relative_to(engine.workspace)):
+                        ("create" if not path.is_file()
+                         else ("refresh" if RULES_MARKER in path.read_text(encoding="utf-8", errors="replace")
+                               else "append"))
+                    for path in rules_files
+                }
+                if args.format == "json":
+                    print(json.dumps({"status": "dry-run", "files": planned,
+                                      "config": ".buildanchor.json", "block": rule_block}, indent=2))
+                else:
+                    print("Would write .buildanchor.json, and this block into:")
+                    for name, action in planned.items():
+                        print(f"  {name} ({action})")
+                    print("\n" + "-" * 62)
+                    print(rule_block.rstrip())
+                    print("-" * 62)
+                    print("\nNothing was written. Re-run without --dry-run to apply, "
+                          "or 'buildanchor init --undo' to remove it later.")
+                return 0
+
+            actions = {}
+            for path in rules_files:
+                actions[path] = _apply_rule_block(path, rule_block)
+            rules_file = rules_files[0]
 
             badge = "[![BuildAnchor Verified](https://img.shields.io/badge/BuildAnchor-Protected-blue)](https://github.com/tensilestream/buildanchor)"
 
@@ -871,19 +1351,45 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({
                     "status": "initialized",
                     "workspace": str(engine.workspace),
+                    "repository_shape": shape,
                     "config_file": str(config_path.relative_to(engine.workspace)),
                     "rules_file": str(rules_file.relative_to(engine.workspace)),
-                    "verified_commands": config_data["verified_commands"],
+                    "rules_files": {
+                        str(path.relative_to(engine.workspace)): action
+                        for path, action in actions.items()
+                    },
+                    "commands": config_data["commands"],
                     "badge": badge,
                 }, indent=2))
             else:
                 print(f"BuildAnchor initialized for {engine.workspace.name or engine.workspace}")
+                print(f"  Repository: {shape} — {(report.repository or {}).get('reason', '')}")
                 print(f"  Config: {config_path.name}")
-                print(f"  Rules:  {rules_file.name}")
-                if test_cmd:
-                    print(f"  Test:   {test_cmd}")
-                if build_cmd:
-                    print(f"  Build:  {build_cmd}")
+                rendered = ", ".join(f"{path.name} ({action})" for path, action in actions.items())
+                print(f"  Rules:  {rendered}")
+                print("          agents read these without being asked")
+                for phase in ("test", "build"):
+                    resolved = phases[phase]
+                    if resolved.get("command"):
+                        where = resolved.get("working_directory", ".")
+                        status = resolved.get("command_status", "declared")
+                        location = "" if where == "." else f"  (in {where})"
+                        print(f"  {phase.capitalize():6} {resolved['command']}{location}  [{status}]")
+                proven_modules = [
+                    module for module in report.module_details
+                    if module.get("test_command_status", "declared") != "declared"
+                ]
+                if report.module_details:
+                    print(f"  Modules: {len(report.module_details)}"
+                          f" ({len(proven_modules)} with a proven test command)")
+                nothing_proven = (
+                    phases["test"].get("command_status", "declared") == "declared"
+                    and not proven_modules
+                )
+                if nothing_proven:
+                    print()
+                    print("  These commands are declared, not proven. Run 'buildanchor verify'")
+                    print("  to execute a discovery probe and record how far each one gets.")
                 print()
                 print("README badge snippet:")
                 print(f"  {badge}")
@@ -891,7 +1397,7 @@ def main(argv: list[str] | None = None) -> int:
 
         report = engine._inspect_cached()
         if args.command == "inspect":
-            result = report.to_dict()
+            result = schema_module.render(report.to_dict(), args.schema)
         elif args.command == "context":
             result = engine.context(report, args.token_budget).to_dict()
         elif args.command == "change-impact":
@@ -966,7 +1472,14 @@ def main(argv: list[str] | None = None) -> int:
         _print_text(result)
 
     # Exit code contract:  0=valid/found  1=invalid/not-found  2=inconclusive  3=blocked/mismatch  4=error
-    if args.command in {"validate-change", "compatibility", "preflight", "plan"}:
+    #
+    # `inspect` and `change-impact` are included: a caller that scripts
+    # `buildanchor inspect` on a directory with no build system was previously
+    # told the run succeeded, while the report itself said "inconclusive". An
+    # exit code that disagrees with the payload it accompanies is worse than no
+    # exit code.
+    if args.command in {"validate-change", "compatibility", "preflight", "plan",
+                        "inspect", "change-impact"}:
         return {"valid": 0, "invalid": 1, "inconclusive": 2, "blocked": 3}.get(result.get("status", "unknown"), 2)
     return 0
 
@@ -1013,7 +1526,7 @@ def _print_find_result(result: dict, explain: bool = False) -> None:
         installed = r.get("installed")
         print(f"Ecosystem: {eco}")
         if installed:
-            print(f"Status: installed")
+            print("Status: installed")
             print(f"Version (installed): {r.get('installed_version', '?')}")
         else:
             print("Status: declared but NOT installed")
@@ -1102,7 +1615,7 @@ def _add_explanations(result: dict) -> dict:
         for rec in result["recommendations"]:
             rec = dict(rec)
             code = rec.get("code", "")
-            rec["why"] = _EXPLANATIONS.get(code, f"why: BuildAnchor detected this based on static analysis of your project configuration.")
+            rec["why"] = _EXPLANATIONS.get(code, "why: BuildAnchor detected this based on static analysis of your project configuration.")
             recs.append(rec)
         result["recommendations"] = recs
     if "steps" in result:
@@ -1114,7 +1627,7 @@ def _add_explanations(result: dict) -> dict:
                 for rec in step["recommendations"]:
                     rec = dict(rec)
                     code = rec.get("code", "")
-                    rec["why"] = _EXPLANATIONS.get(code, f"why: BuildAnchor detected this based on static analysis of your project configuration.")
+                    rec["why"] = _EXPLANATIONS.get(code, "why: BuildAnchor detected this based on static analysis of your project configuration.")
                     recs.append(rec)
                 step["recommendations"] = recs
             steps.append(step)

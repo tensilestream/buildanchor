@@ -155,7 +155,7 @@ class CLITests(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 code = main(["cmd", "test", "--workspace", str(root)])
             self.assertEqual(code, 0)
-            self.assertEqual(out.getvalue().strip(), "npm run test")
+            self.assertEqual(out.getvalue().strip(), "npm test")
 
             # Positional cmd build: exit 0
             out = io.StringIO()
@@ -183,8 +183,83 @@ class CLITests(unittest.TestCase):
                 code = main(["init", "--workspace", str(root)])
             self.assertEqual(code, 0)
             self.assertTrue((root / ".buildanchor.json").is_file())
-            self.assertTrue((root / "AGENT.md").is_file())
+            # AGENTS.md is the cross-agent convention; AGENT.md was read by
+            # nothing. An existing CLAUDE.md or AGENT.md is still preferred.
+            rules = root / "AGENTS.md"
+            self.assertTrue(rules.is_file())
+            written = rules.read_text(encoding="utf-8")
+            self.assertIn("npm test", written)
+            self.assertIn("buildanchor verify", written)
+            self.assertIn("Single-project repository", written)
             self.assertIn("BuildAnchor Verified", out.getvalue())
+
+            # Re-running refreshes the block in place rather than appending a
+            # second, divergent copy.
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(["init", "--workspace", str(root)])
+            self.assertEqual(rules.read_text(encoding="utf-8").count("<!-- BuildAnchor Rules Block -->"), 1)
+
+    def test_init_updates_every_agent_file_not_just_one(self) -> None:
+        """A file left holding an older answer is worse than no file."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({"scripts": {"test": "node --test"}}), encoding="utf-8")
+            (root / "CLAUDE.md").write_text("# House rules\n", encoding="utf-8")
+            (root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(["init", "--workspace", str(root)])
+            for name in ("CLAUDE.md", "AGENTS.md"):
+                written = (root / name).read_text(encoding="utf-8")
+                self.assertIn("BuildAnchor Rules Block", written, name)
+                self.assertIn("npm test", written, name)
+
+    def test_init_check_reports_drift_and_changes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({"scripts": {"test": "node --test"}}), encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(["init", "--workspace", str(root)])
+            rules = root / "AGENTS.md"
+            before = rules.read_text(encoding="utf-8")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["init", "--workspace", str(root), "--check"]), 0)
+
+            # The repository becomes a workspace: shape and commands change.
+            (root / "package.json").write_text(
+                json.dumps({"workspaces": ["packages/*"], "scripts": {"test": "node --test"}}), encoding="utf-8")
+            package = root / "packages" / "api"
+            package.mkdir(parents=True)
+            (package / "package.json").write_text(
+                json.dumps({"name": "api", "scripts": {"test": "node --test"}}), encoding="utf-8")
+
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                code = main(["init", "--workspace", str(root), "--check"])
+            self.assertEqual(code, 1)
+            self.assertIn("stale", err.getvalue())
+            self.assertEqual(rules.read_text(encoding="utf-8"), before, "--check must not write")
+
+    def test_init_rules_file_override(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({"scripts": {"test": "node --test"}}), encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(["init", "--workspace", str(root), "--rules-file", "docs/AGENT_NOTES.md"])
+            self.assertTrue((root / "docs" / "AGENT_NOTES.md").is_file())
+            self.assertFalse((root / "AGENTS.md").is_file())
+
+    def test_init_prefers_an_existing_claude_md(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({"scripts": {"test": "jest"}}), encoding="utf-8")
+            (root / "CLAUDE.md").write_text("# House rules\n\nBe careful.\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(["init", "--workspace", str(root)])
+            written = (root / "CLAUDE.md").read_text(encoding="utf-8")
+            self.assertIn("House rules", written)
+            self.assertIn("BuildAnchor Rules Block", written)
+            self.assertFalse((root / "AGENTS.md").is_file())
 
     def test_setup_copilot_creates_and_safely_updates_workspace_mcp_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -257,7 +332,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("[x] Cursor  Repository", output.getvalue())
         self.assertIn("> [ ] GitHub Copilot  Repository", output.getvalue())
         self.assertIn("[Space] Toggle", output.getvalue())
-        self.assertNotIn("❯", output.getvalue())
+        self.assertNotIn("❯", output.getvalue())  # noqa: RUF001 — the point is that this character is absent
 
     @unittest.skipIf(os.name == "nt", "PTY integration is POSIX-specific")
     def test_interactive_mcp_selector_runs_correctly_in_a_real_tty(self) -> None:

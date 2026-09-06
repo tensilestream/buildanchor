@@ -9,9 +9,77 @@
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![Organization](https://img.shields.io/badge/org-Tensilestream-orange.svg)](https://github.com/tensilestream)
 
-BuildAnchor is an open-source, local-first **Build Truth and change-validation layer for AI coding agents** by [Tensilestream](https://github.com/tensilestream).
+**BuildAnchor tells you the command that builds and tests this repository — and
+whether it actually runs.** Open source, local-first, offline, no LLM calls.
+By [Tensilestream](https://github.com/tensilestream).
 
-Every time a coding agent guesses which test command to run, which Java runtime a repo targets, or whether to use `javax.persistence` or `jakarta.persistence`, it wastes tokens and risks making an incompatible change. BuildAnchor answers those questions in milliseconds — locally, offline, and with zero LLM calls — so the agent doesn't have to.
+```bash
+$ buildanchor cmd test --explain
+command: uv run pytest
+working_directory: .
+status: collects          # a discovery probe was executed and exited 0
+```
+
+Every tool of this kind can read a manifest and report what it found. None of
+them can tell you whether the command they found *works* — and a plausible,
+wrong command is expensive: an agent pays for the tool call, a screen of
+collection errors in its context, and a repair turn. So BuildAnchor executes a
+cheap discovery probe and reports how far the command is actually proven:
+
+| Status | Meaning |
+| --- | --- |
+| `declared` | Found in a manifest. A candidate — this is where other tools stop. |
+| `resolvable` | Its entrypoint exists on disk or `PATH`. Nothing executed. |
+| `collects` | A discovery-only probe exited 0 in the right directory. Seconds. |
+| `passes` | The full command exited 0. |
+
+Commands always come with the **directory they run in**, because `pytest lib-a`
+from the repository root is not the same thing as `pytest` inside `lib-a`, and
+in a repository with more than one project only the second one works.
+
+It knows the difference between a monorepo, a single project, and a root project
+with an SDK beside it — and only gives you scoping advice when there is a
+scoping decision to make.
+
+### How often is the obvious guess wrong?
+
+On twelve real, unmodified public repositories — cloned at benchmark time, none
+of them ours:
+
+| | Gets the project's own test command |
+| --- | --- |
+| Guessing from the manifest (`pytest`, `npm test`, `go test ./...`) | **7 / 12 — 58%** |
+| BuildAnchor | **12 / 12 — 100%** |
+
+**Five of the twelve declare a test entry point that is not their ecosystem's
+default, and nothing about the repository announces it.** Flask declares
+`[tool.tox]` in its `pyproject.toml`. Requests, pydantic and cobra each have a
+`test` target in a `Makefile`. `just` has a `test` recipe in its own justfile.
+An agent that guesses `pytest` at Flask is not obviously wrong — it is wrong in
+the way that costs a turn to discover.
+
+Every row is verifiable: the benchmark cites the file that declares the answer,
+so you can confirm any of them by opening it. Where a project declares nothing,
+its ecosystem default *is* correct and is scored that way — those seven rows are
+where this tool earns nothing, counted honestly.
+
+```bash
+uv run python benchmarks/head_to_head.py --format text     # clones the corpus
+```
+
+Measured against the previous release, on fixtures you can regenerate offline:
+
+| | 1.1.6 | Now |
+| --- | --- | --- |
+| Emitted test commands that actually run (polyglot monorepo) | **0 / 3** | **5 / 5** |
+| Single-project repositories classified correctly | not modelled | 4 / 4 |
+| Inspect latency, 9,331-file git repository | 478 ms | **83 ms** |
+| MCP tool call, back to back within one turn | 200 ms | **0.1 ms** |
+| MCP schema tokens resident per agent turn | 2,510 | **702** |
+
+```bash
+uv run python benchmarks/credibility_benchmark.py --format text
+```
 
 ## Quick Start (Get Started in 10 Seconds)
 
@@ -48,16 +116,257 @@ pip install buildanchor
 
 ---
 
-## How it saves LLM tokens
+## What it saves an agent
 
 | Without BuildAnchor | With BuildAnchor |
 |---|---|
 | Agent reads `pom.xml`, `build.gradle`, `pyproject.toml`, `package.json`, … | Agent injects one ~150-token block from `build.llm_prompt` |
 | Agent guesses `javax.persistence` vs `jakarta.persistence` | BuildAnchor detects Spring Boot 3+ and flags the correct namespace |
-| Agent tries the wrong test command and wastes a turn repairing it | BuildAnchor proves the exact validated test command |
+| Agent tries the wrong test command and wastes a turn repairing it | BuildAnchor gives the command, the directory it runs in, and how far it is proven (`buildanchor verify`) |
 | Agent silently uses the 2015 Rust edition | BuildAnchor warns and recommends edition 2021 |
 
-**Typical savings: 500–2000 tokens per agent invocation** on polyglot repositories.
+The tokens are the smaller half. The larger half is the turn an agent does not
+spend running a wrong command and reading the failure — which is why the
+benchmark measures whether the command runs rather than how short the report is.
+
+### Put it where agents already look
+
+The highest-leverage thing BuildAnchor does is not an MCP tool an agent has to
+choose to call. It is a block in the file agents read anyway:
+
+```bash
+buildanchor init --verify
+```
+
+This writes the command, the directory it runs in, and how far it is proven into
+**every** agent guidance file the repository has — `CLAUDE.md`, `AGENTS.md`,
+`AGENT.md`, `GEMINI.md`, and any other file already carrying the block. Not one
+of them: updating a single file leaves the others holding an older answer, and
+an agent will trust whichever one its own tool happens to read. If the
+repository has none, `AGENTS.md` is created, since that is the convention the
+most tools understand. `--rules-file <path>` overrides all of this.
+
+Re-running refreshes the block in place, keeping any surrounding content you
+wrote. To stop it rotting, `--check` reports drift and changes nothing:
+
+```bash
+buildanchor init --check    # exit 1 if the guidance no longer matches the repo
+```
+
+That is wired as a `pre-commit` hook (`buildanchor-agent-guidance`) that runs
+only when a manifest changes, and `buildanchor-verify` as a `pre-push` hook. A
+stale build instruction is worse than none, because nothing about it looks
+stale to the agent reading it.
+
+### It uses the conventions you already have
+
+If your repository declares how it builds, that is the answer — BuildAnchor
+finds it and says where it came from, rather than replacing it with a default.
+
+| You declare | It answers |
+| --- | --- |
+| `justfile` with a `test` recipe | `just test` |
+| `Taskfile.yml` with a `test` task | `task test` |
+| `Makefile` with a `test` target | `make test` |
+| `mise.toml` with a `[tasks.test]` | `mise run test` |
+| `noxfile.py` with a `tests` session | `nox -s tests` |
+| `tox.ini` | `tox` |
+| `package.json` scripts, `[tool.pytest]`, … | the ecosystem's own answer |
+
+A repository with `test: cargo nextest run` in its justfile gets `just test`, not
+`cargo test`. A tool that overrides your convention is a tool that tells your team
+they are doing it wrong, and that is not something anyone adopts. Where a runner
+declares no target for the phase you asked about, the ecosystem default answers
+instead.
+
+### Building your own agent on top of it
+
+If you are *writing* an agent rather than using one, MCP is a lot of machinery
+for something running in your own process. The tool definitions and a dispatcher
+are exported directly:
+
+```python
+import anthropic
+from buildanchor import agent
+
+client = anthropic.Anthropic()
+messages = [{"role": "user", "content": "Run this project's tests."}]
+
+response = client.messages.create(
+    model="claude-opus-5",
+    max_tokens=16000,
+    thinking={"type": "adaptive"},
+    tools=agent.tool_definitions(),          # ~700 tokens of schema
+    messages=messages,
+)
+
+# Return every tool_result from one turn in a single user message.
+results = [
+    agent.tool_result_block(block.id, agent.run_tool(block.name, block.input, workspace="."))
+    for block in response.content
+    if block.type == "tool_use"
+]
+if results:
+    messages += [{"role": "assistant", "content": response.content},
+                 {"role": "user", "content": results}]
+```
+
+Node is the same shape:
+
+```javascript
+import { toolDefinitions, runTool, toolResultBlock } from "@tensilestream/buildanchor";
+
+const response = await client.messages.create({
+  model: "claude-opus-5",
+  max_tokens: 16000,
+  thinking: { type: "adaptive" },
+  tools: await toolDefinitions(),
+  messages: [{ role: "user", content: "Run this project's tests." }],
+});
+```
+
+Three things worth knowing:
+
+- **The schemas are the same ones the MCP server advertises**, so an agent you
+  build and an agent using the MCP server see an identical surface. There is no
+  second definition to drift.
+- **`run_tool` returns errors instead of raising them.** A model told what went
+  wrong can correct itself; an exception in your process just ends the loop.
+- **Tools that execute project code are excluded by default.** Handing an agent
+  a tool list should not be how it acquires the ability to run your test suite;
+  pass `include_executing=True` when you mean it.
+
+Cheaper still, when you already know the agent will need it — put the build
+truth in your cached system prompt instead of spending a tool call:
+
+```python
+system = [{"type": "text", "text": agent.system_prompt_block("."),
+           "cache_control": {"type": "ephemeral"}}]
+```
+
+### Try it on your own repositories
+
+The fastest way to judge this is to point it at code you know and see whether it
+is right.
+
+```bash
+git clone https://github.com/tensilestream/buildanchor && cd buildanchor
+./scripts/try-it.sh ~/code/*          # or any paths you like
+```
+
+It reads only — nothing is executed or written — and for each repository it
+prints the shape, the resolved command, where that command came from, and what
+`verify` *would* run. Then judge it on one question: **is the command right?**
+Compare it with what you actually type. If it is wrong, that is worth reporting,
+and `buildanchor doctor <path>` will name the rule that produced it.
+
+Add `--verify` when you want it to prove the commands run.
+
+### It runs commands on your machine. Here is exactly which.
+
+That is the fair question to ask a tool you have not read, and the answer should
+be an inventory rather than a reassurance:
+
+| | |
+| --- | --- |
+| Subprocess call sites in the whole package | **10** |
+| That run *your* project's code | **2** — `verify`, and `validate-change --execute` |
+| That use a shell | **0** |
+| Runtime dependencies | **0** |
+| Lines of Python to read if you want to check all of this | **~7,800** |
+
+The other eight are read-only `git` — `ls-files`, `rev-parse`, `diff`,
+`status`. No subcommand there can modify a repository. `inspect`, `context`,
+`modules`, `cmd`, `doctor` and the MCP server execute nothing at all: static
+mode is static, and neither operation that runs code is reachable over MCP or
+HTTP, because a remote caller cannot consent to that.
+
+None of this is on trust. `tests/test_execution_surface.py` parses the package,
+finds every subprocess call, and fails if one appears that is not in the
+inventory — or if any of them ever loses its timeout, builds a command from a
+string, or asks for a shell. [`docs/EXECUTION.md`](docs/EXECUTION.md) is the full
+account, including what gets written to your repository and how to remove it.
+
+```bash
+grep -rn "shell=True" src/buildanchor     # returns nothing
+buildanchor verify --dry-run              # exactly what it would run, runs nothing
+```
+
+### Try it without installing anything, and undo it in one command
+
+```bash
+uvx buildanchor doctor            # zero install: what does it know about my repo?
+buildanchor init --dry-run        # exactly what it would write, writes nothing
+buildanchor verify --dry-run      # exactly what it would execute, runs nothing
+buildanchor init --undo           # removes everything init wrote
+```
+
+`--undo` restores your `CLAUDE.md` byte-for-byte, keeping every word you wrote,
+and deletes `.buildanchor.json`. It leaves `.buildanchor/verified.json` alone:
+that is evidence produced by `verify`, not something `init` created.
+
+### Keeping it true
+
+Setting this up once is not the hard part; staying correct is. Two hooks and a
+workflow do that without anyone having to remember:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/tensilestream/buildanchor
+    rev: v1.9.0
+    hooks:
+      - id: buildanchor-agent-guidance   # pre-commit, only when a manifest changes
+      - id: buildanchor-verify           # pre-push, proves the commands still run
+```
+
+For CI, copy [`.github/workflows/buildanchor.yml`](.github/workflows/buildanchor.yml):
+it fails when `CLAUDE.md` / `AGENTS.md` stop describing the repository, and when a
+command the repository advertises does not run.
+
+```bash
+buildanchor init --check    # exit 1 if the guidance is stale. Changes nothing.
+```
+
+### When something is missing
+
+```bash
+$ buildanchor doctor web-ui
+web-ui: 'package.json' declares no 'test' or 'build' script, so there is no entry point to report
+  markers found: package.json
+  -> Add a "test" or "build" script to package.json, or
+  -> list this package in the workspace declaration at the repository root.
+```
+
+`buildanchor doctor` answers the question people actually ask — *why isn't my
+project showing up?* — by naming the rule that applied, the evidence it saw, and
+what would have to change. With no argument it diagnoses the whole repository:
+shape, modules, which commands are unproven, and which ones are broken.
+
+### Works the same on one project as on forty
+
+The benchmark measures both shapes, because a tool that only pays off on a
+40-package monorepo does not get installed by the people who would benefit from
+it on an ordinary Tuesday.
+
+| Fixture | Shape | Classified | Emitted command runs |
+| --- | --- | --- | --- |
+| Python project at the root | single-project | correct | 1 / 1 |
+| Node project at the root | single-project | correct | 1 / 1 |
+| Go project at the root | single-project | correct | toolchain not installed here |
+| Rust project at the root | single-project | correct | toolchain not installed here |
+| Root project + SDK subdirectory | root-plus-satellites | correct | 2 / 2 |
+| 3 Python + 2 Node siblings, no workspace file | monorepo | correct | 5 / 5 |
+
+The single-project rows matter as much as the monorepo one: BuildAnchor says
+*"single-project repository: one test command, no scoping needed"* and stops,
+rather than advertising `--scope ui` at a repository that has no scopes. Advice
+that does not apply is noise, and noise makes an agent discount the rest of the
+report.
+
+Full method and raw numbers: [`benchmarks/README.md`](benchmarks/README.md).
+Fixtures are generated offline and deterministically, so the figures are
+reproducible on your machine and falsifiable if they are wrong.
 
 ## Universal Kickstart by Ecosystem
 
@@ -100,6 +409,87 @@ buildanchor cmd test --scope apps/api
 # Automatically detect and test ONLY packages modified in git diff
 buildanchor cmd test --changed
 ```
+
+### Verified commands, not guessed ones
+
+Static analysis can show that a command was *declared*. It cannot show that the
+command runs — the tests may fail to import, the runner may not be installed,
+the suite may collect nothing. `buildanchor verify` closes that gap by climbing
+a ladder, in each module's own working directory, and recording how far it got:
+
+| Status | Meaning | Executes |
+| --- | --- | --- |
+| `declared` | Found in a manifest. A candidate, not a fact. | nothing |
+| `resolvable` | The entrypoint it names exists on disk or `PATH`. | nothing |
+| `collects` | A discovery-only probe exited 0 in the module's own directory. | a cheap probe |
+| `passes` | The full command exited 0. | the suite |
+
+```bash
+buildanchor verify                      # climb to 'collects' — seconds, no tests run
+buildanchor verify --verify-level passes --scope web-ui
+buildanchor verify --jobs 8             # probe modules concurrently
+```
+
+A probe loads the test files and runs no test body:
+
+| Runner | Probe |
+| --- | --- |
+| pytest | `--collect-only -q` |
+| unittest | `-k '(?!)'` — imports every test module, matches no test |
+| jest / vitest / mocha / playwright | `--listTests` / `list` / `--dry-run` / `--list` |
+| `node --test` | `--test-name-pattern '(?!)'` |
+| Go | `go test -run '^$' ./...` |
+| Rust | `cargo test --no-run` |
+| Maven / Gradle | `-DskipTests test-compile` / `testClasses` |
+| .NET | `dotnet test --list-tests` |
+
+A runner absent from that table reports `resolvable (no probe available)` — never
+a guess. Modules are probed concurrently, so a monorepo pays for its slowest
+module rather than the sum of all of them.
+
+The result is cached in `.buildanchor/verified.json`, keyed by a digest of the
+files that determine the toolchain. Every later `inspect`, `modules` and `cmd`
+call reports the proven status **without re-running anything**, until a manifest
+changes and the result honestly reverts to `declared`.
+
+**Commit that file.** It records which commands are proven for which manifest
+digest — a fact about the repository, not about the machine that ran the probe.
+It holds no absolute paths and no hostnames, and a re-run that changes nothing
+produces no diff, so it survives code review. Commit it and a fresh clone already
+knows; let CI write it and the evidence from the suite it runs on every push stops
+being thrown away. It records nothing about the machine that ran the probe, so the same result written by CI and by a developer is byte-identical.
+
+Commands verified at `passes` also carry their observed duration, so an agent
+choosing between a probe and the real suite knows whether that costs four seconds
+or eleven minutes instead of guessing.
+
+Verification executes project-defined code, so it is opt-in and local-only: it
+is not an MCP tool and not an HTTP endpoint.
+
+### Commands come with the directory they run in
+
+A command without a working directory is ambiguous the moment a repository holds
+more than one project — which is the only situation modules exist for. Every
+module therefore reports both:
+
+```json
+{
+  "name": "service-a",
+  "path": "service-a",
+  "working_directory": "service-a",
+  "test_command": "uv run pytest",
+  "test_command_shell": "cd service-a && uv run pytest",
+  "test_command_status": "collects"
+}
+```
+
+`test_command` is relative to `working_directory`; `test_command_shell` is the
+same thing pasteable from the repository root — POSIX `sh` syntax, so a caller
+that does not know the target shell should use `working_directory` plus the bare
+command instead. Where a project declares its own
+environment — a `uv.lock`, a `poetry.lock`, a `.venv/`, a `pnpm-lock.yaml` —
+BuildAnchor uses it, because `python -m pytest <path>` run from the root cannot
+import the package under test.
 
 ### Real-World Developer Tasks & Agent Prompts
 
@@ -167,12 +557,21 @@ BuildAnchor reports what a repository can prove about its build system, runtime,
 
 ## Who this is for
 
-BuildAnchor is designed for:
+Two audiences, and the honesty is worth more than the breadth:
 
-- Teams building AI coding agents that need repository-aware context before editing code.
-- Developer-platform and DevOps teams supporting many repositories and build systems.
-- Maintainers who want a repeatable pre-change check and evidence-backed change validation.
-- Security-conscious engineering teams that need local-first, bounded, auditable diagnostics.
+- **People building or running AI coding agents.** An agent entering an
+  unfamiliar repository pays several turns to learn what BuildAnchor answers in
+  one call, and gets a command that has been proven to run rather than guessed.
+- **Platform teams with more repositories than they can hold in their head.**
+  One tool and one hook keep forty repositories' build instructions true, which
+  nobody can do by hand.
+
+If you have a single repository you know well, write the command in your
+`CLAUDE.md` yourself. It will be exact where a general heuristic can only be
+close, and a `grep` is faster than any tool. BuildAnchor earns its place when the
+repository is unfamiliar, when there are many of them, or when the instruction
+needs to *stay* true — which is what `buildanchor init --check` does and a
+hand-written file cannot.
 
 ## What it saves
 
@@ -428,18 +827,50 @@ Use `claude-code` for repository setup; `claude-desktop` is available only when 
 
 Available MCP tools:
 
-- `build.inspect`
-- `build.context`
-- `build.preflight`
-- `build.plan`
-- `build.change_impact`
-- `build.validate_change`
-- `build.repair_guidance`
-- `build.explain_dependency`
+- `get_build_truth` — build system, runtimes, compatibility constraints, validation
+  commands. `detail: "summary"` (default, <= 400 tokens), `"full"` (modules,
+  dependencies, evidence digests), or `"changed"` (git baseline impact).
+- `get_test_command` — the command for a phase, the `working_directory` it must run
+  in, and its `command_status` on the verification ladder. Supports `scope` and
+  `changed` for monorepo targeting.
+- `find_package` — installed and declared versions, import patterns, usage.
+
+**Why only three.** Every advertised tool schema sits in the agent's context on
+every turn, whether or not BuildAnchor is called. The full registry costs about
+2,300 tokens per turn — more than a BuildAnchor call typically saves — and its
+overlapping entries cost the agent a turn whenever it picks the wrong door.
+These three cover the same surface for roughly 700.
+
+The extended `build.*` tools (`build.inspect`, `build.context`, `build.preflight`,
+`build.plan`, `build.change_impact`, `build.validate_change`,
+`build.repair_guidance`, `build.explain_dependency`, `build.compatibility`,
+`build.modules`, `build.cmd`, `build.llm_prompt`, `build.token_estimate`,
+`build.find_package`) remain callable by name and are unchanged. To advertise the
+full list in `tools/list` as before, set `BUILDANCHOR_MCP_TOOLS=full`.
+
+Command verification (`buildanchor verify`) is deliberately absent from MCP: it
+executes project-defined code, so it stays an explicit local action. Agents still
+read its results through `command_status`.
 
 `build.validate_change` is static by default. Pass `execute: true` and an optional `timeout` to run detected validation probes with `shell=False`, bounded output, and per-command timeouts. BuildAnchor reports each probe as `passed`, `failed`, `timed_out`, or `unavailable`; it never turns a missing baseline or missing tool into a pass.
 
-For automation, `validate-change` exits `0` for `valid`, `1` for `invalid`, `2` for `inconclusive`, and `3` for `blocked`.
+For automation, `validate-change` exits `0` for `valid`, `1` for `invalid`, `2` for
+`inconclusive`, and `3` for `blocked` by policy. Any command exits `4` when
+BuildAnchor itself refuses the request — an unresolvable workspace, a path outside
+the allowed root, an unsupported `--schema`. `4` is distinct from `3` on purpose:
+`3` is a judgement about your repository, `4` means no judgement was made at all.
+
+### Report schema
+
+The report declares `schema_version`. The current schema is `v2`; `v1` is
+deprecated, supported through the 1.3 series, and removed at 2.0.
+
+`v1` changed meaning in 1.2.0 before this was versioned properly: `test_command`
+had been relative to the repository root and became relative to the module's
+`working_directory`. Pass `--schema v1` (or `schema: "v1"` to `get_build_truth`
+with `detail: "full"`) to get v1's shape and v1's contract — a command runnable
+from the repository root. Asking for an unsupported schema is an error, never a
+silent substitution.
 
 The compact context pack gives an agent authoritative facts first and evidence references on demand.
 
@@ -612,7 +1043,7 @@ javac --release 17 -d /tmp/buildanchor-java-classes sdk/java/src/main/java/com/b
 Run the local benchmark harness when changing inspection, context, or planning behavior:
 
 ```bash
-uv run python benchmarks/benchmark_cli.py --iterations 20 --warmups 3 --format text
+uv run python benchmarks/credibility_benchmark.py --format text
 ```
 
 The benchmarks report local latency for a deterministic representative fixture. They are
