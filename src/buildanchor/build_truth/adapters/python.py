@@ -46,10 +46,10 @@ class PythonAdapter:
     @staticmethod
     def _module_label(engine: Any, path: Path) -> str:
         try:
-            relative = path.parent.relative_to(engine.workspace)
+            relative = path.parent.relative_to(engine.workspace).as_posix()
         except ValueError:
             return "."
-        return str(relative) if str(relative) != "." else "."
+        return relative if relative != "." else "."
 
     def find_package(self, engine: Any, name: str, show_usage: bool) -> list[dict]:
         normalized = re.sub(r"[-_.]+", "-", name).lower()
@@ -69,7 +69,7 @@ class PythonAdapter:
                         if metadata.is_file():
                             for line in metadata.read_text(encoding="utf-8", errors="replace").splitlines()[:20]:
                                 if line.startswith("Version:"): installed_version = line.split(":", 1)[1].strip()
-                            install_path = str(site_packages.relative_to(engine.workspace))
+                            install_path = site_packages.relative_to(engine.workspace).as_posix()
         declared_version, declared_file = None, None
         for filename in ("pyproject.toml", "requirements.txt", "requirements-dev.txt"):
             path = engine.workspace / filename

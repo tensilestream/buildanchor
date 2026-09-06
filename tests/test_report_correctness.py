@@ -67,7 +67,7 @@ class NodeDiscoveryTests(unittest.TestCase):
                 if Path(item.path).name in ("package.json", "pyproject.toml")
             ]
             for marker in project_markers:
-                directory_of = str(Path(marker).parent) or "."
+                directory_of = Path(marker).parent.as_posix() if str(Path(marker).parent) != "." else "."
                 if directory_of in module_dirs:
                     continue
                 self.assertTrue(
@@ -249,7 +249,7 @@ class WalkTests(unittest.TestCase):
             engine = BuildAnchor(str(root))
             # Compare against the engine's resolved workspace: on macOS the
             # temp directory is reached through a /var -> /private/var symlink.
-            listed = {str(p.relative_to(engine.workspace)) for p in engine._files()}
+            listed = {p.relative_to(engine.workspace).as_posix() for p in engine._files()}
             self.assertIn("app/main.py", listed)
             self.assertFalse([p for p in listed if p.startswith("node_modules")])
 
@@ -493,8 +493,8 @@ class FileEnumerationTests(unittest.TestCase):
             with unittest.mock.patch.object(type(engine), "_git_tracked_files", lambda self: None):
                 from_walk = engine._files()
             self.assertEqual(
-                sorted(str(p.relative_to(engine.workspace)) for p in from_git),
-                sorted(str(p.relative_to(engine.workspace)) for p in from_walk),
+                sorted(p.relative_to(engine.workspace).as_posix() for p in from_git),
+                sorted(p.relative_to(engine.workspace).as_posix() for p in from_walk),
             )
 
     def test_a_non_git_directory_still_works(self) -> None:

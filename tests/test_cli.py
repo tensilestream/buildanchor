@@ -98,6 +98,7 @@ class CLITests(unittest.TestCase):
             self.assertIn("No Git repository was detected", output.getvalue())
 
 
+    @unittest.skipIf(os.name == "nt", "install.sh is POSIX-specific")
     def test_installer_script_help(self) -> None:
         import subprocess
         script = Path(__file__).resolve().parents[1] / "scripts" / "install.sh"

@@ -80,7 +80,7 @@ def detect(files: list[Path], workspace: Path) -> list[dict]:
 
     for path in files:
         try:
-            relative = str(path.relative_to(workspace))
+            relative = path.relative_to(workspace).as_posix()
         except ValueError:
             continue
 

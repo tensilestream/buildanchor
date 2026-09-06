@@ -1304,7 +1304,7 @@ def main(argv: list[str] | None = None) -> int:
                 removed: list[str] = []
                 for path in _agent_rules_files(engine.workspace, getattr(args, "rules_file", None)):
                     if _remove_rule_block(path):
-                        removed.append(str(path.relative_to(engine.workspace)))
+                        removed.append(path.relative_to(engine.workspace).as_posix())
                 config_path = engine.workspace / ".buildanchor.json"
                 if config_path.is_file():
                     config_path.unlink()
@@ -1317,7 +1317,7 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"removed BuildAnchor content from {item}")
                     record = engine.workspace / ".buildanchor" / "verified.json"
                     if record.is_file():
-                        print(f"\nLeft in place: {record.relative_to(engine.workspace)} — "
+                        print(f"\nLeft in place: {record.relative_to(engine.workspace).as_posix()} — "
                               "that is verification evidence, written by 'verify', not by 'init'.")
                 else:
                     print("Nothing of BuildAnchor's to remove.")
@@ -1330,8 +1330,8 @@ def main(argv: list[str] | None = None) -> int:
                 stale = [f for f in rules_files if not _rule_block_is_current(f, rule_block)]
                 payload = {
                     "status": "stale" if stale else "current",
-                    "checked": [str(f.relative_to(engine.workspace)) for f in rules_files],
-                    "stale": [str(f.relative_to(engine.workspace)) for f in stale],
+                    "checked": [f.relative_to(engine.workspace).as_posix() for f in rules_files],
+                    "stale": [f.relative_to(engine.workspace).as_posix() for f in stale],
                 }
                 if args.format == "json":
                     print(json.dumps(payload, indent=2))
@@ -1351,7 +1351,7 @@ def main(argv: list[str] | None = None) -> int:
                 # this do to my repository?" should be answerable without
                 # finding out the hard way.
                 planned = {
-                    str(path.relative_to(engine.workspace)):
+                    path.relative_to(engine.workspace).as_posix():
                         ("create" if not path.is_file()
                          else ("refresh" if RULES_MARKER in path.read_text(encoding="utf-8", errors="replace")
                                else "append"))
@@ -1383,10 +1383,10 @@ def main(argv: list[str] | None = None) -> int:
                     "status": "initialized",
                     "workspace": str(engine.workspace),
                     "repository_shape": shape,
-                    "config_file": str(config_path.relative_to(engine.workspace)),
-                    "rules_file": str(rules_file.relative_to(engine.workspace)),
+                    "config_file": config_path.relative_to(engine.workspace).as_posix(),
+                    "rules_file": rules_file.relative_to(engine.workspace).as_posix(),
                     "rules_files": {
-                        str(path.relative_to(engine.workspace)): action
+                        path.relative_to(engine.workspace).as_posix(): action
                         for path, action in actions.items()
                     },
                     "commands": config_data["commands"],

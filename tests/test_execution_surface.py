@@ -51,7 +51,7 @@ def _call_sites() -> list[tuple[str, str, ast.Call]]:
     sites: list[tuple[str, str, ast.Call]] = []
     for path in sorted(SOURCE_ROOT.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        relative = str(path.relative_to(SOURCE_ROOT))
+        relative = path.relative_to(SOURCE_ROOT).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -160,7 +160,7 @@ class NetworkSurfaceTests(unittest.TestCase):
     def test_only_the_sdk_can_reach_the_network(self) -> None:
         offenders = []
         for path in sorted(SOURCE_ROOT.rglob("*.py")):
-            relative = str(path.relative_to(SOURCE_ROOT))
+            relative = path.relative_to(SOURCE_ROOT).as_posix()
             if relative in self.NETWORK_ALLOWED:
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

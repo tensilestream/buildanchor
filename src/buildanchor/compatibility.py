@@ -277,7 +277,7 @@ def compatibility_recommendations(
         for path in source_files:
             text = path.read_text(encoding="utf-8", errors="replace")[:500_000]
             for match in re.finditer(rf"\b{re.escape(rule['legacy_prefix'])}(?:\.[A-Za-z_$][\w$]*)+", text):
-                findings.append({"path": str(path.relative_to(workspace)), "symbol": match.group(0)})
+                findings.append({"path": path.relative_to(workspace).as_posix(), "symbol": match.group(0)})
         legacy_dep = [
             item for item in dependencies
             if rule["legacy_prefix"].split(".")[1] in str(item.get("coordinate", "")).lower()
@@ -317,14 +317,14 @@ def compatibility_recommendations(
                     if re.search(r"^\s*(?:import\s+distutils|from\s+distutils\b)", _read_head(p), re.MULTILINE)
                 ]
                 if hits:
-                    recommendations.append(_simple_rec(rule, [str(p.relative_to(workspace)) for p in hits], "python"))
+                    recommendations.append(_simple_rec(rule, [p.relative_to(workspace).as_posix() for p in hits], "python"))
             elif rule["check"] == "pkg_resources_import":
                 hits = [
                     p for p in py_sources
                     if re.search(r"^\s*(?:import\s+pkg_resources|from\s+pkg_resources\b)", _read_head(p), re.MULTILINE)
                 ]
                 if hits:
-                    recommendations.append(_simple_rec(rule, [str(p.relative_to(workspace)) for p in hits], "python"))
+                    recommendations.append(_simple_rec(rule, [p.relative_to(workspace).as_posix() for p in hits], "python"))
 
     # --- Node ---
     if "node" in build_systems:
@@ -337,15 +337,15 @@ def compatibility_recommendations(
             for rule in _NODE_RULES:
                 if rule["check"] == "missing_exports":
                     if "main" in pkg and "exports" not in pkg:
-                        recommendations.append(_simple_rec(rule, [str(path.relative_to(workspace))], "node"))
+                        recommendations.append(_simple_rec(rule, [path.relative_to(workspace).as_posix()], "node"))
                 elif rule["check"] == "deprecated_request":
                     all_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
                     if "request" in all_deps:
-                        recommendations.append(_simple_rec(rule, [str(path.relative_to(workspace))], "node"))
+                        recommendations.append(_simple_rec(rule, [path.relative_to(workspace).as_posix()], "node"))
                 elif rule["check"] == "node_gyp":
                     all_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
                     if "node-gyp" in all_deps:
-                        recommendations.append(_simple_rec(rule, [str(path.relative_to(workspace))], "node"))
+                        recommendations.append(_simple_rec(rule, [path.relative_to(workspace).as_posix()], "node"))
 
     # --- Go ---
     if "go" in build_systems:
@@ -364,7 +364,7 @@ def compatibility_recommendations(
             if edition_match and edition_match.group(1) == "2015":
                 for rule in _RUST_RULES:
                     if rule["check"] == "rust_edition_2015":
-                        recommendations.append(_simple_rec(rule, [str(path.relative_to(workspace))], "rust"))
+                        recommendations.append(_simple_rec(rule, [path.relative_to(workspace).as_posix()], "rust"))
 
     # --- Objective mismatch detection ---
     recommendations.extend(_detect_objective_mismatch(objective, build_systems))

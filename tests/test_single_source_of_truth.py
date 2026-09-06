@@ -36,7 +36,7 @@ class VocabularyTests(unittest.TestCase):
 
     def test_project_markers_are_defined_once(self) -> None:
         definitions = [
-            str(path.relative_to(SOURCE_ROOT))
+            path.relative_to(SOURCE_ROOT).as_posix()
             for path, source in _sources()
             if re.search(r"(?m)^\s*PROJECT_MARKERS(_NAMES)?\s*[:=]\s*(dict|tuple|\{|\()", source)
         ]
@@ -47,7 +47,7 @@ class VocabularyTests(unittest.TestCase):
 
     def test_phase_aliases_are_defined_once(self) -> None:
         definitions = [
-            str(path.relative_to(SOURCE_ROOT))
+            path.relative_to(SOURCE_ROOT).as_posix()
             for path, source in _sources()
             if re.search(r"(?mi)^\s*(PHASE_ALIASES|phase_aliases)\s*[:=]\s*(dict|\{)", source)
         ]
@@ -107,7 +107,7 @@ class VocabularyTests(unittest.TestCase):
 class IgnoreListTests(unittest.TestCase):
     def test_the_ignore_list_is_defined_once(self) -> None:
         definitions = [
-            str(path.relative_to(SOURCE_ROOT))
+            path.relative_to(SOURCE_ROOT).as_posix()
             for path, source in _sources()
             if re.search(r'(?m)^\s*(IGNORED_DIRS|ignored)\s*[:=]\s*(frozenset|set|\{)', source)
         ]
@@ -122,7 +122,7 @@ class ShapeDerivationTests(unittest.TestCase):
 
     def test_is_monorepo_is_never_re_derived(self) -> None:
         offenders = [
-            str(path.relative_to(SOURCE_ROOT))
+            path.relative_to(SOURCE_ROOT).as_posix()
             for path, source in _sources()
             if path.name != "repository_shape.py"
             and re.search(r'"is_monorepo":\s*(len\(|bool\(len\()', source)

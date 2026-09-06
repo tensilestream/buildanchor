@@ -52,7 +52,7 @@ class InspectionMixin:
                 if (self.workspace / "pom.xml").is_file():
                     maven_cmd = [mvn_bin, "test"]
                 elif matches:
-                    rel_pom = str(matches[0].relative_to(self.workspace)) if matches[0].is_absolute() else str(matches[0])
+                    rel_pom = self._relative(matches[0])
                     maven_cmd = [mvn_bin, "test", "-f", rel_pom]
                 else:
                     maven_cmd = [mvn_bin, "test"]
@@ -598,14 +598,16 @@ class InspectionMixin:
         module_dirs.add(".")
         notes: list[str] = []
         for item in evidence:
-            path = Path(getattr(item, "path", ""))
+            raw_path = getattr(item, "path", "")
+            path = Path(raw_path)
             if path.name not in self.PROJECT_MARKERS:
                 continue
-            directory = str(path.parent) or "."
+            posix_path = path.as_posix()
+            directory = path.parent.as_posix() if str(path.parent) != "." else "."
             if directory in module_dirs:
                 continue
             notes.append(
-                f"Marker '{path}' was detected but '{directory}' is not reported as a module: "
+                f"Marker '{posix_path}' was detected but '{directory}' is not reported as a module: "
                 "it declares no test or build entry point that BuildAnchor recognises."
             )
         return sorted(set(notes))

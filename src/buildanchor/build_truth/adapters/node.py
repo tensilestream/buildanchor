@@ -32,7 +32,7 @@ class NodeAdapter:
             if not isinstance(package, dict):
                 continue
             try:
-                relative = str(path.parent.relative_to(engine.workspace))
+                relative = path.parent.relative_to(engine.workspace).as_posix()
             except ValueError:
                 relative = "."
             module = relative if relative != "." else "."
@@ -63,7 +63,7 @@ class NodeAdapter:
             scripts = json.loads(text).get("scripts", {})
         except json.JSONDecodeError:
             return []
-        relative_directory = str(path.parent.relative_to(engine.workspace))
+        relative_directory = path.parent.relative_to(engine.workspace).as_posix()
         # Run inside the package directory. `npm --prefix <dir>` leaves the
         # working directory at the root, which breaks any script resolving a
         # relative path — and contradicts the working directory this same
@@ -110,4 +110,4 @@ class NodeAdapter:
         usage = engine._grep_usage(name, {".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"}) if show_usage else []
         if installed_version is None and declared_version is None and not usage:
             return []
-        return [{"ecosystem": self.system, "package": name, "installed": installed_version is not None, "installed_version": installed_version, "declared_version": declared_version, "declared_scope": declared_scope, "install_path": str(module_path.relative_to(engine.workspace)) if module_path.is_dir() else None, "import_patterns": patterns, "usage": usage[:5]}]
+        return [{"ecosystem": self.system, "package": name, "installed": installed_version is not None, "installed_version": installed_version, "declared_version": declared_version, "declared_scope": declared_scope, "install_path": module_path.relative_to(engine.workspace).as_posix() if module_path.is_dir() else None, "import_patterns": patterns, "usage": usage[:5]}]
