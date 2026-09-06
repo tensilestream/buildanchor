@@ -1,0 +1,62 @@
+{
+  "version": "1.1",
+  "build_systems": [
+    "maven",
+    "node",
+    "python",
+    "generic"
+  ],
+  "languages": [
+    "Java",
+    "JavaScript",
+    "Python",
+    "Ruby",
+    "Shell",
+    "TypeScript"
+  ],
+  "repository": {
+    "shape": "root-plus-satellites",
+    "reason": "a root project (pyproject.toml) with 1 subordinate package",
+    "is_monorepo": false,
+    "root_is_a_project": true,
+    "module_count": 1
+  },
+  "commands": {
+    "test": {
+      "command": "uv run pytest",
+      "working_directory": ".",
+      "status": "collects"
+    },
+    "build": {
+      "command": "python -m build",
+      "working_directory": ".",
+      "status": "declared"
+    },
+    "lint": {
+      "command": "ruff check .",
+      "working_directory": ".",
+      "status": "declared"
+    },
+    "format": {
+      "command": "ruff format .",
+      "working_directory": ".",
+      "status": "declared"
+    }
+  },
+  "modules": [
+    {
+      "name": "@tensilestream/buildanchor",
+      "path": "sdk/node",
+      "working_directory": "sdk/node",
+      "test_command": "npm test",
+      "test_command_status": "collects"
+    }
+  ],
+  "verified_commands": {
+    "test": "uv run pytest",
+    "build": "python -m build",
+    "lint": "ruff check .",
+    "format": "ruff format ."
+  },
+  "policy": "allow"
+}

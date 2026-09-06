@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from buildanchor import BuildAnchor, BuildAnchorError
+from buildanchor import BuildAnchor, BuildAnchorError, schema
 
 
 class BuildAnchorEngineTests(unittest.TestCase):
@@ -41,7 +41,7 @@ class BuildAnchorEngineTests(unittest.TestCase):
             engine = BuildAnchor(root)
             report = engine.inspect()
             context = engine.context(report, token_budget=100)
-            self.assertEqual(context.schema_version, "v1")
+            self.assertEqual(context.schema_version, schema.CURRENT_SCHEMA)
             self.assertTrue(context.evidence_refs)
             self.assertLess(len(json.dumps(context.to_dict())), 2000)
 
@@ -148,7 +148,7 @@ class BuildAnchorEngineTests(unittest.TestCase):
             }), encoding="utf-8")
             (root / "pnpm-lock.yaml").write_text("", encoding="utf-8")
             engine = BuildAnchor(root)
-            self.assertEqual(engine.resolve_command("test")["command"], "pnpm run test")
+            self.assertEqual(engine.resolve_command("test")["command"], "pnpm test")
             self.assertEqual(engine.resolve_command("build")["command"], "pnpm run build")
 
         # Python with pytest in pyproject.toml
@@ -186,7 +186,11 @@ class BuildAnchorEngineTests(unittest.TestCase):
             (sub / "package.json").write_text(json.dumps({"scripts": {"test": "node --test"}}), encoding="utf-8")
             report = BuildAnchor(root).inspect()
             cmd_entry = next(c for c in report.validation_commands if c["command"][0] == "npm")
-            self.assertEqual(cmd_entry["command"], ["npm", "--prefix", "sdk/node", "test"])
+            # Executing "in that package" means the working directory, not a
+            # --prefix flag: --prefix leaves the process at the repository root.
+            self.assertEqual(cmd_entry["command"], ["npm", "test"])
+            self.assertEqual(cmd_entry["working_directory"], "sdk/node")
+            self.assertEqual(cmd_entry["command_shell"], "cd sdk/node && npm test")
 
 
 if __name__ == "__main__":

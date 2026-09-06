@@ -9,24 +9,51 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..core import toolchain
+
 
 class NodeAdapter:
     system = "node"
 
     def collect_facts(self, engine: Any, paths: list[Path], facts: list, evidence: list, dependencies: list[dict[str, Any]]) -> None:
-        path, text = engine._first_text([path for path in paths if path.name == "package.json"])
-        if not path:
-            return
-        try:
-            package = json.loads(text)
-        except json.JSONDecodeError:
-            return
-        for key in ("engines", "packageManager"):
-            if key in package:
-                engine._fact(f"node.{key}", package[key], path, evidence, facts)
-        for section in ("dependencies", "devDependencies", "peerDependencies"):
-            for name, version in package.get(section, {}).items():
-                dependencies.append({"coordinate": f"{name}@{version}", "scope": section, "source": "declared", "status": "unresolved"})
+        """Collect engine facts and declared dependencies from every manifest.
+
+        Reads all ``package.json`` files rather than the first in sort order,
+        so one arbitrary package cannot stand in for the whole repository.
+        """
+        for path in sorted({path for path in paths if path.name == "package.json"}):
+            text = engine._read(path)
+            if not text:
+                continue
+            try:
+                package = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(package, dict):
+                continue
+            try:
+                relative = path.parent.relative_to(engine.workspace).as_posix()
+            except ValueError:
+                relative = "."
+            module = relative if relative != "." else "."
+            for key in ("engines", "packageManager"):
+                if key in package:
+                    engine._fact(
+                        f"node.{key}", package[key], path, evidence, facts,
+                        module=None if module == "." else module,
+                    )
+            for section in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+                entries = package.get(section)
+                if not isinstance(entries, dict):
+                    continue
+                for name, version in entries.items():
+                    dependencies.append({
+                        "coordinate": f"{name}@{version}",
+                        "scope": section,
+                        "module": module,
+                        "source": "declared",
+                        "status": "unresolved",
+                    })
 
     def validation_commands(self, engine: Any, paths: list[Path]) -> list[dict[str, Any]]:
         path, text = engine._first_text([path for path in paths if path.name == "package.json"])
@@ -36,11 +63,23 @@ class NodeAdapter:
             scripts = json.loads(text).get("scripts", {})
         except json.JSONDecodeError:
             return []
-        relative_directory = path.parent.relative_to(engine.workspace)
-        prefix = [] if relative_directory == Path(".") else ["--prefix", str(relative_directory)]
+        relative_directory = path.parent.relative_to(engine.workspace).as_posix()
+        # Run inside the package directory. `npm --prefix <dir>` leaves the
+        # working directory at the root, which breaks any script resolving a
+        # relative path — and contradicts the working directory this same
+        # report gives for the module.
+        runner, _source = toolchain.node_runner(path.parent, engine.workspace)
         if "test" in scripts:
-            return [engine._command(["npm", *prefix, "test"], "package.json test script", [path])]
-        return [engine._command(["npm", *prefix, "run", "build"], "package.json build script", [path])] if "build" in scripts else []
+            return [engine._command(
+                toolchain.node_script_command(runner, "test"),
+                "package.json test script", [path], working_directory=relative_directory,
+            )]
+        if "build" in scripts:
+            return [engine._command(
+                toolchain.node_script_command(runner, "build"),
+                "package.json build script", [path], working_directory=relative_directory,
+            )]
+        return []
 
     def find_package(self, engine: Any, name: str, show_usage: bool) -> list[dict]:
         module_path = engine.workspace / "node_modules" / name
@@ -71,4 +110,4 @@ class NodeAdapter:
         usage = engine._grep_usage(name, {".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"}) if show_usage else []
         if installed_version is None and declared_version is None and not usage:
             return []
-        return [{"ecosystem": self.system, "package": name, "installed": installed_version is not None, "installed_version": installed_version, "declared_version": declared_version, "declared_scope": declared_scope, "install_path": str(module_path.relative_to(engine.workspace)) if module_path.is_dir() else None, "import_patterns": patterns, "usage": usage[:5]}]
+        return [{"ecosystem": self.system, "package": name, "installed": installed_version is not None, "installed_version": installed_version, "declared_version": declared_version, "declared_scope": declared_scope, "install_path": module_path.relative_to(engine.workspace).as_posix() if module_path.is_dir() else None, "import_patterns": patterns, "usage": usage[:5]}]

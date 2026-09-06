@@ -1,0 +1,23 @@
+{
+  "entries": {
+    ".::test": {
+      "command": "uv run pytest",
+      "full_run_duration_ms": null,
+      "level_reached": "collects",
+      "manifest_digest": "sha256:41a89b910669a11604c2709c1278fcc269b1866aa6d211d26c603840489c4b05",
+      "outcome": "collects",
+      "verified_at": "2026-09-06T03:07:29Z",
+      "working_directory": "."
+    },
+    "sdk/node::test": {
+      "command": "npm test",
+      "full_run_duration_ms": null,
+      "level_reached": "collects",
+      "manifest_digest": "sha256:d42d14c5a5f4283bd51de1d08ec408203c72d1686d0857cc6f569d86e70c5f14",
+      "outcome": "collects",
+      "verified_at": "2026-09-06T03:07:29Z",
+      "working_directory": "sdk/node"
+    }
+  },
+  "schema_version": "v1"
+}

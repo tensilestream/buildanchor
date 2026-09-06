@@ -9,6 +9,7 @@ import json
 from typing import Any
 
 from ...models import ModuleInfo
+from ..core import conventions, toolchain, vocabulary
 
 
 class CommandResolutionMixin:
@@ -17,33 +18,36 @@ class CommandResolutionMixin:
         phase: str = "test",
         scope: str | None = None,
         changed: bool = False,
+        report: Any = None,
     ) -> dict[str, Any]:
         """Resolve the verified shell command for a build phase (test, build, lint, format, clean).
 
-        Inspects package.json scripts, pyproject.toml, pom.xml, build.gradle, go.mod, Cargo.toml,
-        and Makefile to determine the canonical command for the requested phase.
+        A task runner the repository declares — justfile, Taskfile, Makefile,
+        mise, noxfile, tox — answers first, because that is what a person on the
+        team actually types. Otherwise the ecosystem's own manifest decides:
+        package.json scripts, pyproject.toml, pom.xml, build.gradle, go.mod,
+        Cargo.toml.
 
         Supports monorepo scoping via `scope` ('ui', 'backend', package name/path)
         and git change-impact targeting via `changed=True`.
         """
         workspace = self.workspace
-        modules = self.discover_modules()
-        is_monorepo = bool(
-            len(modules) > 1
-            or (len(modules) == 1 and modules[0].path != ".")
-            or (workspace / "turbo.json").is_file()
-            or (workspace / "nx.json").is_file()
-            or (workspace / "pnpm-workspace.yaml").is_file()
-        )
+        # One report per call. Asking twice — once for the modules, once for the
+        # shape — walked and digested the whole repository a second time to
+        # validate a cache that then hit.
+        # Reuse the caller's report when it has one: validating the cache costs
+        # a full walk of the repository, so doing it twice per request is the
+        # single largest avoidable cost in the MCP path.
+        report = report if report is not None else self._inspect_cached()
+        modules = [self._module_info(detail) for detail in report.module_details]
+        # Shape comes from the report so `cmd` and `inspect` cannot disagree
+        # about whether this repository is a monorepo. A root project with one
+        # SDK subdirectory is not one, and advertising scoping there is noise.
+        repository = report.repository or {}
+        shape = repository.get("shape", "unknown")
+        is_monorepo = bool(repository.get("is_monorepo", False))
 
-        phase_aliases = {
-            "test": ["test", "test:unit", "test:all", "tests", "check"],
-            "build": ["build", "compile", "dist", "bundle"],
-            "lint": ["lint", "lint:fix", "eslint", "check", "typecheck"],
-            "format": ["format", "fmt", "prettier", "prettier:write"],
-            "clean": ["clean", "reset"],
-        }
-        aliases = phase_aliases.get(phase, [phase])
+        aliases = vocabulary.aliases_for(phase)
 
         targeted_modules: list[ModuleInfo] = []
         reason: str | None = None
@@ -74,6 +78,7 @@ class CommandResolutionMixin:
                 "ui": "ui", "frontend": "ui", "front-end": "ui", "web": "ui", "client": "ui",
                 "backend": "backend", "be": "backend", "api": "backend", "server": "backend", "service": "backend",
                 "shared": "shared", "common": "shared", "lib": "shared", "utils": "shared",
+                "unknown": "unknown", "unclassified": "unknown",
             }
             target_cat = cat_map.get(scope_clean)
             if target_cat:
@@ -102,7 +107,21 @@ class CommandResolutionMixin:
             res["scope"] = scope
             res["changed"] = changed
             res["is_monorepo"] = is_monorepo
+            res["repository_shape"] = shape
             res["targeted_modules"] = [m.to_dict() for m in used_mods]
+            # A command is only unambiguous alongside the directory it runs in.
+            # A single target contributes its own; a fan-out over several
+            # modules is already root-relative by construction.
+            res["working_directory"] = used_mods[0].working_directory if len(used_mods) == 1 else "."
+            res["command_duration_ms"] = (
+                used_mods[0].test_command_duration_ms
+                if len(used_mods) == 1 and phase == "test" else None
+            )
+            res["command_status"] = (
+                used_mods[0].test_command_status
+                if len(used_mods) == 1 and phase == "test"
+                else self._verified_status_for(res["working_directory"], phase, res.get("command"))
+            )
             res["reason"] = reason or ("Targeted module command" if used_mods else ("Root workspace command" if is_monorepo else "Single-project command"))
             return res
 
@@ -206,36 +225,40 @@ class CommandResolutionMixin:
                     "ecosystem": "go",
                 })
 
-            # Fallback / Polyglot targeted execution per module
+            # Fallback / polyglot targeted execution. Each module already
+            # carries the command its own toolchain needs and the directory it
+            # must run in; re-deriving a second, root-relative form here is how
+            # `cmd` and `modules` came to disagree.
+            if len(targeted_modules) == 1:
+                only = targeted_modules[0]
+                command = only.test_command if phase == "test" else only.build_command
+                if command:
+                    return _wrap({
+                        "phase": phase,
+                        "command": command,
+                        "command_shell": (
+                            only.test_command_shell if phase == "test" else only.build_command_shell
+                        ),
+                        "source": "module toolchain",
+                        "ecosystem": only.ecosystem,
+                    })
+
+            # Several modules: chain their root-safe forms, each of which
+            # carries its own `cd`, and report the root as the directory.
             cmds = []
-            for m in targeted_modules:
-                if m.ecosystem == "node":
-                    if phase == "test":
-                        cmds.append(f"npm --prefix {m.path} test")
-                    else:
-                        cmds.append(f"npm --prefix {m.path} run {phase}")
-                elif m.ecosystem == "python":
-                    if phase == "test":
-                        cmds.append(f"python -m pytest {m.path}")
-                    else:
-                        cmds.append(f"python -m build {m.path}")
-                elif m.ecosystem == "maven":
-                    wrapper = "./mvnw" if (workspace / "mvnw").is_file() else "mvn"
-                    if (workspace / "pom.xml").is_file():
-                        cmds.append(f"{wrapper} {phase} -pl {m.path}")
-                    else:
-                        cmds.append(f"{wrapper} {phase} -f {m.path}/pom.xml")
-                elif m.ecosystem == "gradle":
-                    wrapper = "./gradlew" if (workspace / "gradlew").is_file() else "gradle"
-                    cmds.append(f"{wrapper} :{m.name}:{phase}")
-                elif m.ecosystem == "rust":
-                    cmds.append(f"cargo {phase} -p {m.name}")
-                elif m.ecosystem == "go":
-                    cmds.append(f"go {phase} ./{m.path}/...")
-                elif m.test_command and phase == "test":
-                    cmds.append(m.test_command)
-                else:
-                    cmds.append(f"cd {m.path} && npm test")
+            for module in targeted_modules:
+                shell = module.test_command_shell if phase == "test" else module.build_command_shell
+                direct = module.test_command if phase == "test" else module.build_command
+                chosen = shell or direct
+                if chosen:
+                    cmds.append(chosen)
+            if not cmds:
+                return _wrap({
+                    "phase": phase,
+                    "command": None,
+                    "source": "monorepo module convention",
+                    "ecosystem": targeted_modules[0].ecosystem,
+                })
 
             return _wrap({
                 "phase": phase,
@@ -247,22 +270,28 @@ class CommandResolutionMixin:
         # Fallback to root workspace resolution
         result = {"phase": phase, "command": None, "source": None, "ecosystem": None}
 
+        # A declared task runner comes first. A repository with a justfile
+        # reading `test: cargo nextest run` has said how it wants to be tested;
+        # answering `cargo test` there would be the tool overriding the team.
+        declared = conventions.declared_command(workspace, phase)
+        if declared:
+            result["command"] = " ".join(declared["command"])
+            result["source"] = f"{declared['source']} [{declared['runner']} {declared['target']}]"
+            result["ecosystem"] = declared["runner"]
+            return _wrap(result, [])
+
         # Node.js: check package.json scripts
         pkg_json = workspace / "package.json"
         if pkg_json.is_file():
             try:
                 pkg = json.loads(pkg_json.read_text(encoding="utf-8", errors="replace"))
                 scripts = pkg.get("scripts", {})
-                runner = "npm run"
-                if (workspace / "pnpm-lock.yaml").is_file():
-                    runner = "pnpm run"
-                elif (workspace / "bun.lockb").is_file() or (workspace / "bun.lock").is_file():
-                    runner = "bun run"
-                elif (workspace / "yarn.lock").is_file():
-                    runner = "yarn"
+                # Same resolver the module path uses, so the root and a
+                # sub-package cannot disagree about how a script is invoked.
+                runner, _lock_source = toolchain.node_runner(workspace)
                 for alias in aliases:
                     if alias in scripts:
-                        result["command"] = f"{runner} {alias}"
+                        result["command"] = " ".join(toolchain.node_script_command(runner, alias))
                         result["source"] = "package.json"
                         result["ecosystem"] = "node"
                         return _wrap(result, [])
@@ -275,12 +304,9 @@ class CommandResolutionMixin:
             text = pyproject.read_text(encoding="utf-8", errors="replace")
             if phase == "test":
                 if "[tool.pytest" in text:
-                    runner = "python -m pytest"
-                    if (workspace / ".venv").is_dir():
-                        runner = ".venv/bin/python -m pytest"
-                    elif (workspace / "venv").is_dir():
-                        runner = "venv/bin/python -m pytest"
-                    result["command"] = runner
+                    argv, env_source = toolchain.python_test_command(workspace)
+                    result["command"] = " ".join(argv)
+                    result["toolchain_source"] = env_source
                     result["source"] = "pyproject.toml [tool.pytest]"
                     result["ecosystem"] = "python"
                     return _wrap(result, [])
@@ -342,17 +368,6 @@ class CommandResolutionMixin:
                 result["source"] = "Cargo.toml"
                 result["ecosystem"] = "rust"
                 return _wrap(result, [])
-
-        # Makefile fallback
-        makefile = workspace / "Makefile"
-        if makefile.is_file():
-            text = makefile.read_text(encoding="utf-8", errors="replace")
-            for alias in aliases:
-                if f"\n{alias}:" in text or text.startswith(f"{alias}:"):
-                    result["command"] = f"make {alias}"
-                    result["source"] = "Makefile"
-                    result["ecosystem"] = "make"
-                    return _wrap(result, [])
 
         # Root fallbacks for monorepo orchestrators if no explicit script matched
         if (workspace / "turbo.json").is_file():

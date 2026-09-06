@@ -1,0 +1,542 @@
+{
+  "baseline_ref": "HEAD",
+  "python": "3.10.20",
+  "platform": "darwin",
+  "fixtures": {
+    "polyglot": {
+      "baseline": {
+        "modules_found": 3,
+        "module_paths": [
+          "lib-a",
+          "service-a",
+          "service-b"
+        ],
+        "ecosystems": [
+          "python"
+        ],
+        "languages": [
+          "C/C++",
+          "Dart",
+          "JavaScript",
+          "PHP",
+          "Python",
+          "Ruby",
+          "Swift",
+          "TypeScript"
+        ],
+        "dependency_count": 3,
+        "dependency_modules": [
+          "unattributed"
+        ],
+        "malformed_coordinates": [
+          "lib_a_dep>=1.0\", \"httpx>=0.25.0",
+          "pytest>=7\", \"pytest-asyncio>=0.23\", \"coverage>=7"
+        ],
+        "discovery": {
+          "markers_total": 5,
+          "markers_resolved": 3,
+          "unresolved": [
+            "bot/package.json",
+            "web-ui/package.json"
+          ],
+          "completeness_pct": 60.0
+        },
+        "command_correctness": {
+          "modules_total": 3,
+          "modules_executed": 3,
+          "modules_runs": 0,
+          "correctness_pct": 0.0,
+          "outcomes": [
+            {
+              "path": "lib-a",
+              "ecosystem": "python",
+              "category": "shared",
+              "test_command": "python -m pytest lib-a",
+              "working_directory": ".",
+              "result": "fails",
+              "exit_code": 1,
+              "duration_ms": 25,
+              "output_tail": "/opt/miniconda3/bin/python: No module named pytest\n"
+            },
+            {
+              "path": "service-a",
+              "ecosystem": "python",
+              "category": "backend",
+              "test_command": "python -m pytest service-a",
+              "working_directory": ".",
+              "result": "fails",
+              "exit_code": 1,
+              "duration_ms": 11,
+              "output_tail": "/opt/miniconda3/bin/python: No module named pytest\n"
+            },
+            {
+              "path": "service-b",
+              "ecosystem": "python",
+              "category": "backend",
+              "test_command": "python -m pytest service-b",
+              "working_directory": ".",
+              "result": "fails",
+              "exit_code": 1,
+              "duration_ms": 11,
+              "output_tail": "/opt/miniconda3/bin/python: No module named pytest\n"
+            }
+          ]
+        },
+        "latency": {
+          "median_ms": 7.9,
+          "p95_ms": 7.9,
+          "iterations": 3
+        }
+      },
+      "working_tree": {
+        "modules_found": 5,
+        "module_paths": [
+          "bot",
+          "lib-a",
+          "service-a",
+          "service-b",
+          "web-ui"
+        ],
+        "ecosystems": [
+          "node",
+          "python"
+        ],
+        "languages": [
+          "JavaScript",
+          "Python",
+          "TypeScript"
+        ],
+        "dependency_count": 18,
+        "dependency_modules": [
+          "bot",
+          "lib-a",
+          "service-a",
+          "service-b",
+          "web-ui"
+        ],
+        "malformed_coordinates": [],
+        "discovery": {
+          "markers_total": 5,
+          "markers_resolved": 5,
+          "unresolved": [],
+          "completeness_pct": 100.0
+        },
+        "command_correctness": {
+          "modules_total": 5,
+          "modules_executed": 5,
+          "modules_runs": 5,
+          "correctness_pct": 100.0,
+          "outcomes": [
+            {
+              "path": "bot",
+              "ecosystem": "node",
+              "category": "unknown",
+              "test_command": "npm test",
+              "working_directory": "bot",
+              "result": "runs",
+              "exit_code": 0,
+              "duration_ms": 237,
+              "output_tail": ""
+            },
+            {
+              "path": "lib-a",
+              "ecosystem": "python",
+              "category": "shared",
+              "test_command": ".venv/bin/python -m pytest",
+              "working_directory": "lib-a",
+              "result": "runs",
+              "exit_code": 0,
+              "duration_ms": 115,
+              "output_tail": ""
+            },
+            {
+              "path": "service-a",
+              "ecosystem": "python",
+              "category": "backend",
+              "test_command": ".venv/bin/python -m pytest",
+              "working_directory": "service-a",
+              "result": "runs",
+              "exit_code": 0,
+              "duration_ms": 97,
+              "output_tail": ""
+            },
+            {
+              "path": "service-b",
+              "ecosystem": "python",
+              "category": "backend",
+              "test_command": ".venv/bin/python -m pytest",
+              "working_directory": "service-b",
+              "result": "runs",
+              "exit_code": 0,
+              "duration_ms": 96,
+              "output_tail": ""
+            },
+            {
+              "path": "web-ui",
+              "ecosystem": "node",
+              "category": "ui",
+              "test_command": "npm test",
+              "working_directory": "web-ui",
+              "result": "runs",
+              "exit_code": 0,
+              "duration_ms": 208,
+              "output_tail": ""
+            }
+          ]
+        },
+        "latency": {
+          "median_ms": 11.7,
+          "p95_ms": 11.7,
+          "iterations": 3
+        }
+      }
+    },
+    "shapes": {
+      "single-python": {
+        "expected_shape": "single-project",
+        "baseline": {
+          "shape": "not-reported",
+          "languages": [
+            "Python"
+          ],
+          "command_correctness": {
+            "modules_total": 1,
+            "modules_executed": 1,
+            "modules_runs": 1,
+            "correctness_pct": 100.0,
+            "outcomes": [
+              {
+                "path": ".",
+                "ecosystem": "python",
+                "working_directory": ".",
+                "test_command": ".venv/bin/python -m pytest",
+                "result": "runs",
+                "exit_code": 0,
+                "duration_ms": 113,
+                "output_tail": ""
+              }
+            ]
+          },
+          "latency": {
+            "median_ms": 6.4,
+            "p95_ms": 6.1,
+            "iterations": 2
+          }
+        },
+        "working_tree": {
+          "shape": "single-project",
+          "languages": [
+            "Python"
+          ],
+          "command_correctness": {
+            "modules_total": 1,
+            "modules_executed": 1,
+            "modules_runs": 1,
+            "correctness_pct": 100.0,
+            "outcomes": [
+              {
+                "path": ".",
+                "ecosystem": "python",
+                "working_directory": ".",
+                "test_command": ".venv/bin/python -m pytest",
+                "result": "runs",
+                "exit_code": 0,
+                "duration_ms": 99,
+                "output_tail": ""
+              }
+            ]
+          },
+          "latency": {
+            "median_ms": 11.4,
+            "p95_ms": 10.5,
+            "iterations": 2
+          }
+        }
+      },
+      "single-node": {
+        "expected_shape": "single-project",
+        "baseline": {
+          "shape": "not-reported",
+          "languages": [
+            "JavaScript",
+            "TypeScript"
+          ],
+          "command_correctness": {
+            "modules_total": 1,
+            "modules_executed": 1,
+            "modules_runs": 1,
+            "correctness_pct": 100.0,
+            "outcomes": [
+              {
+                "path": ".",
+                "ecosystem": "node",
+                "working_directory": ".",
+                "test_command": "npm run test",
+                "result": "runs",
+                "exit_code": 0,
+                "duration_ms": 212,
+                "output_tail": ""
+              }
+            ]
+          },
+          "latency": {
+            "median_ms": 5.5,
+            "p95_ms": 5.2,
+            "iterations": 2
+          }
+        },
+        "working_tree": {
+          "shape": "single-project",
+          "languages": [
+            "JavaScript"
+          ],
+          "command_correctness": {
+            "modules_total": 1,
+            "modules_executed": 1,
+            "modules_runs": 1,
+            "correctness_pct": 100.0,
+            "outcomes": [
+              {
+                "path": ".",
+                "ecosystem": "node",
+                "working_directory": ".",
+                "test_command": "npm test",
+                "result": "runs",
+                "exit_code": 0,
+                "duration_ms": 206,
+                "output_tail": ""
+              }
+            ]
+          },
+          "latency": {
+            "median_ms": 10.3,
+            "p95_ms": 9.3,
+            "iterations": 2
+          }
+        }
+      },
+      "single-go": {
+        "expected_shape": "single-project",
+        "baseline": {
+          "shape": "not-reported",
+          "languages": [
+            "Go"
+          ],
+          "command_correctness": {
+            "modules_total": 1,
+            "modules_executed": 0,
+            "modules_runs": 0,
+            "correctness_pct": null,
+            "outcomes": [
+              {
+                "path": ".",
+                "ecosystem": "go",
+                "working_directory": ".",
+                "test_command": "go test ./...",
+                "result": "toolchain_absent",
+                "missing": "go"
+              }
+            ]
+          },
+          "latency": {
+            "median_ms": 5.5,
+            "p95_ms": 5.1,
+            "iterations": 2
+          }
+        },
+        "working_tree": {
+          "shape": "single-project",
+          "languages": [
+            "Go"
+          ],
+          "command_correctness": {
+            "modules_total": 1,
+            "modules_executed": 0,
+            "modules_runs": 0,
+            "correctness_pct": null,
+            "outcomes": [
+              {
+                "path": ".",
+                "ecosystem": "go",
+                "working_directory": ".",
+                "test_command": "go test ./...",
+                "result": "toolchain_absent",
+                "missing": "go"
+              }
+            ]
+          },
+          "latency": {
+            "median_ms": 11.2,
+            "p95_ms": 11.1,
+            "iterations": 2
+          }
+        }
+      },
+      "single-rust": {
+        "expected_shape": "single-project",
+        "baseline": {
+          "shape": "not-reported",
+          "languages": [
+            "Rust"
+          ],
+          "command_correctness": {
+            "modules_total": 1,
+            "modules_executed": 0,
+            "modules_runs": 0,
+            "correctness_pct": null,
+            "outcomes": [
+              {
+                "path": ".",
+                "ecosystem": "rust",
+                "working_directory": ".",
+                "test_command": "cargo test",
+                "result": "toolchain_absent",
+                "missing": "cargo"
+              }
+            ]
+          },
+          "latency": {
+            "median_ms": 5.5,
+            "p95_ms": 5.0,
+            "iterations": 2
+          }
+        },
+        "working_tree": {
+          "shape": "single-project",
+          "languages": [
+            "Rust"
+          ],
+          "command_correctness": {
+            "modules_total": 1,
+            "modules_executed": 0,
+            "modules_runs": 0,
+            "correctness_pct": null,
+            "outcomes": [
+              {
+                "path": ".",
+                "ecosystem": "rust",
+                "working_directory": ".",
+                "test_command": "cargo test",
+                "result": "toolchain_absent",
+                "missing": "cargo"
+              }
+            ]
+          },
+          "latency": {
+            "median_ms": 10.6,
+            "p95_ms": 10.4,
+            "iterations": 2
+          }
+        }
+      },
+      "root-plus-sdk": {
+        "expected_shape": "root-plus-satellites",
+        "baseline": {
+          "shape": "not-reported",
+          "languages": [
+            "JavaScript",
+            "Python",
+            "TypeScript"
+          ],
+          "command_correctness": {
+            "modules_total": 1,
+            "modules_executed": 1,
+            "modules_runs": 1,
+            "correctness_pct": 100.0,
+            "outcomes": [
+              {
+                "path": ".",
+                "ecosystem": "python",
+                "working_directory": ".",
+                "test_command": ".venv/bin/python -m pytest",
+                "result": "runs",
+                "exit_code": 0,
+                "duration_ms": 97,
+                "output_tail": ""
+              }
+            ]
+          },
+          "latency": {
+            "median_ms": 6.9,
+            "p95_ms": 6.6,
+            "iterations": 2
+          }
+        },
+        "working_tree": {
+          "shape": "root-plus-satellites",
+          "languages": [
+            "JavaScript",
+            "Python"
+          ],
+          "command_correctness": {
+            "modules_total": 2,
+            "modules_executed": 2,
+            "modules_runs": 2,
+            "correctness_pct": 100.0,
+            "outcomes": [
+              {
+                "path": ".",
+                "ecosystem": "python",
+                "working_directory": ".",
+                "test_command": ".venv/bin/python -m pytest",
+                "result": "runs",
+                "exit_code": 0,
+                "duration_ms": 98,
+                "output_tail": ""
+              },
+              {
+                "path": "sdk/node",
+                "ecosystem": "node",
+                "category": "shared",
+                "test_command": "npm test",
+                "working_directory": "sdk/node",
+                "result": "runs",
+                "exit_code": 0,
+                "duration_ms": 212,
+                "output_tail": ""
+              }
+            ]
+          },
+          "latency": {
+            "median_ms": 10.7,
+            "p95_ms": 9.6,
+            "iterations": 2
+          }
+        }
+      }
+    },
+    "scale": {
+      "repository": {
+        "files_on_disk": 9331,
+        "vendored_files": 3000,
+        "ignored_files": 4500,
+        "git": true
+      },
+      "baseline": {
+        "latency": {
+          "median_ms": 477.5,
+          "p95_ms": 482.4,
+          "iterations": 5
+        },
+        "modules_found": 12
+      },
+      "working_tree": {
+        "latency": {
+          "median_ms": 82.8,
+          "p95_ms": 82.9,
+          "iterations": 5
+        },
+        "modules_found": 12
+      }
+    }
+  },
+  "mcp_context_cost": {
+    "full_registry_tools": 17,
+    "full_registry_tokens": 2545,
+    "advertised_tools": 3,
+    "advertised_tokens": 736,
+    "tokens_saved_per_turn": 1809,
+    "estimator": "chars/4 approximation"
+  },
+  "baseline_available": true
+}

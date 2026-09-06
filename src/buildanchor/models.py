@@ -23,6 +23,11 @@ class Fact:
     status: str = "proven"
     evidence_ids: tuple[str, ...] = ()
     detail: str = ""
+    #: Which module this fact is about, relative to the workspace, or ``None``
+    #: for a repository-wide fact. Two projects can declare different runtimes;
+    #: encoding that in the key as ``runtime.python@service-a`` made a
+    #: structural relationship into something every caller had to parse.
+    module: str | None = None
 
 
 @dataclass(frozen=True)
@@ -30,9 +35,32 @@ class ModuleInfo:
     name: str
     path: str
     ecosystem: str
-    category: str = "shared"  # "ui" | "backend" | "shared"
+    category: str = "unknown"  # "ui" | "backend" | "shared" | "unknown"
+    #: How much evidence stands behind ``category``: "high" when two signals of
+    #: different kinds agreed, "low" when only one was available, "none" when
+    #: nothing pointed anywhere.
+    category_confidence: str = "none"
     test_command: str | None = None
     build_command: str | None = None
+    # Directory the commands above must run in, relative to the workspace root.
+    # A command without a working directory is ambiguous in any repository that
+    # holds more than one project, which is the only situation modules exist for.
+    working_directory: str = "."
+    # Copy-pasteable equivalents, safe to run from the workspace root.
+    test_command_shell: str | None = None
+    build_command_shell: str | None = None
+    # Verification ladder rung reached for test_command: see
+    # buildanchor.build_truth.core.verification_levels.LEVELS.
+    test_command_status: str = "declared"
+    # What happened at the rung above ``test_command_status``: "failed" when a
+    # probe was run and did not succeed, "skipped" when no honest probe exists.
+    # A rung reached is not the same as a clean result, and reporting only the
+    # rung would overstate it.
+    test_command_outcome: str = "declared"
+    #: Observed wall-clock of the full test command, when it has been run at the
+    #: ``passes`` rung. ``None`` means nobody has paid for that measurement yet.
+    test_command_duration_ms: int | None = None
+    verified_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return _jsonable(asdict(self))
@@ -47,8 +75,15 @@ class BuildReport:
     status: str
     build_systems: list[str] = field(default_factory=list)
     languages: list[str] = field(default_factory=list)
+    # Per-language evidence: file counts, markers and sample paths. A language
+    # with nothing behind it cannot appear here, and a reader can check any
+    # entry the way they can check a fact.
+    language_details: list[dict[str, Any]] = field(default_factory=list)
     modules: list[str] = field(default_factory=list)
     module_details: list[dict[str, Any]] = field(default_factory=list)
+    # How the repository is laid out, and why. Drives the advice given to an
+    # agent: a single-project repository has no scoping decision to make.
+    repository: dict[str, Any] = field(default_factory=dict)
     facts: list[Fact] = field(default_factory=list)
     dependencies: list[dict[str, Any]] = field(default_factory=list)
     recommendations: list[dict[str, Any]] = field(default_factory=list)

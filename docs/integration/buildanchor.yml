@@ -1,0 +1,66 @@
+# Copyright 2026 Tensilestream and BuildAnchor contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Keeps a repository's build truth honest over time.
+#
+# A hand-written CLAUDE.md or AGENTS.md cannot notice that it has gone stale,
+# and nothing about a wrong build instruction looks wrong to the agent reading
+# it. This workflow checks that the guidance still matches the repository, and
+# proves the commands it advertises actually run.
+#
+# Copy into .github/workflows/ of any repository.
+#
+# It deliberately lives here rather than in .github/workflows/. GitHub runs every
+# workflow file in that directory, and this one installs BuildAnchor from PyPI —
+# so in BuildAnchor's own repository it would test the *published* release
+# against the checkout's flags and fail. BuildAnchor checks itself in ci.yml,
+# using the code under review.
+
+name: BuildAnchor
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  build-truth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install BuildAnchor
+        run: pip install --disable-pip-version-check buildanchor
+
+      # Everything below assumes the repository's own toolchain is installed.
+      # Add the setup steps your project needs (setup-node, setup-go, uv sync)
+      # before this point, or verification will honestly report the runners it
+      # cannot find rather than pretending they are fine.
+
+      - name: Agent guidance is current
+        # Fails when CLAUDE.md / AGENTS.md no longer describe how this
+        # repository is built and tested. Run `buildanchor init` to refresh.
+        run: buildanchor init --check
+
+      - name: Commands are proven to run
+        # Executes a discovery-only probe per module — seconds, no test bodies.
+        # Use --verify-level passes to run the real suites instead.
+        run: buildanchor verify --verify-level collects
+
+      - name: Publish the verification record
+        # The cache is a fact about the repository, not about this runner.
+        # Committing it means a fresh clone already knows which commands are
+        # proven, without executing anything.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildanchor-verified
+          path: .buildanchor/verified.json
+          if-no-files-found: ignore

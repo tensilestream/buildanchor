@@ -14,16 +14,20 @@ from pathlib import Path
 from .build_truth.core.errors import BuildAnchorError
 from .build_truth.features.command_resolution import CommandResolutionMixin
 from .build_truth.features.context import ContextMixin
+from .build_truth.features.diagnostics import DiagnosticsMixin
 from .build_truth.features.inspection import InspectionMixin
 from .build_truth.features.package_intelligence import PackageIntelligenceMixin
 from .build_truth.features.validation import ValidationMixin
+from .build_truth.features.verification import VerificationMixin
 from .models import BuildReport
 
 
 class BuildAnchor(
     InspectionMixin,
     ContextMixin,
+    DiagnosticsMixin,
     ValidationMixin,
+    VerificationMixin,
     CommandResolutionMixin,
     PackageIntelligenceMixin,
 ):

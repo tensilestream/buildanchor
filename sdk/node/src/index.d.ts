@@ -36,4 +36,19 @@ export class BuildAnchorClient {
   findPackage(packageName: string, options?: { showUsage?: boolean; installedOnly?: boolean }): Promise<BuildAnchorResponse>;
   modules(): Promise<BuildAnchorResponse>;
   resolveCommand(phase?: string, options?: { scope?: string; changed?: boolean }): Promise<BuildAnchorResponse>;
+
+  /** Explain the repository, or why one directory is not reported as a module. */
+  diagnose(path?: string): Promise<BuildAnchorResponse>;
+
+  /**
+   * Execute a discovery probe per module and record which commands genuinely
+   * run. Local mode only: this executes project-defined code, which a remote
+   * caller cannot consent to. Throws when the client was built with an endpoint.
+   */
+  verifyCommands(options?: {
+    level?: "resolvable" | "collects" | "passes";
+    scope?: string;
+    jobs?: number;
+    dryRun?: boolean;
+  }): Promise<BuildAnchorResponse>;
 }

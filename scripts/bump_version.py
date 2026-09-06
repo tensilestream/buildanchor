@@ -21,6 +21,7 @@ PYPROJECT_PATH = ROOT / "pyproject.toml"
 POM_PATH = ROOT / "sdk" / "java" / "pom.xml"
 NODE_PACKAGE_PATH = ROOT / "sdk" / "node" / "package.json"
 FORMULA_PATH = ROOT / "Formula" / "buildanchor.rb"
+TRANSPORTS_PATH = ROOT / "src" / "buildanchor" / "transports.py"
 
 
 def read_current_version() -> str:
@@ -65,7 +66,7 @@ def update_pyproject(new_version: str) -> None:
 
 def update_uv_lock() -> None:
     try:
-        res = subprocess.run(["uv", "lock"], cwd=ROOT, capture_output=True, text=True, check=True)
+        subprocess.run(["uv", "lock"], cwd=ROOT, capture_output=True, text=True, check=True)
         print("✓ Updated uv.lock")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"! Warning: could not run 'uv lock': {e}", file=sys.stderr)
@@ -116,15 +117,75 @@ def update_formula(new_version: str) -> None:
     print(f"✓ Updated {FORMULA_PATH.relative_to(ROOT)} -> {new_version}")
 
 
+def update_transports(new_version: str) -> None:
+    """The MCP server reports this when package metadata is unavailable."""
+    if not TRANSPORTS_PATH.exists():
+        return
+    content = TRANSPORTS_PATH.read_text(encoding="utf-8")
+    updated = re.sub(
+        r'(def _mcp_version\(\) -> str:.*?return ")[^"]+(")',
+        rf"\g<1>{new_version}\g<2>",
+        content,
+        count=1,
+        flags=re.DOTALL,
+    )
+    TRANSPORTS_PATH.write_text(updated, encoding="utf-8")
+    print(f"✓ Updated {TRANSPORTS_PATH.relative_to(ROOT)} -> {new_version}")
+
+
+def collect_versions() -> dict:
+    """Read the declared version from every artifact that carries one."""
+    found = {"pyproject.toml": read_current_version()}
+    if POM_PATH.exists():
+        match = re.search(r'<artifactId>buildanchor-sdk</artifactId>\s*<version>([^<]+)</version>',
+                          POM_PATH.read_text(encoding="utf-8"))
+        found["sdk/java/pom.xml"] = match.group(1) if match else "unknown"
+    if NODE_PACKAGE_PATH.exists():
+        found["sdk/node/package.json"] = json.loads(
+            NODE_PACKAGE_PATH.read_text(encoding="utf-8")).get("version", "unknown")
+    if FORMULA_PATH.exists():
+        match = re.search(r'version\s+"([^"]+)"', FORMULA_PATH.read_text(encoding="utf-8"))
+        found["Formula/buildanchor.rb"] = match.group(1) if match else "unknown"
+    if TRANSPORTS_PATH.exists():
+        match = re.search(r'def _mcp_version\(\) -> str:.*?return "([^"]+)"',
+                          TRANSPORTS_PATH.read_text(encoding="utf-8"), re.DOTALL)
+        found["src/buildanchor/transports.py"] = match.group(1) if match else "unknown"
+    return found
+
+
+def check_versions() -> int:
+    """Report divergence between artifacts and change nothing.
+
+    A user who installs by Homebrew and reads the changelog is looking at two
+    different products when these drift, and nothing in the build notices.
+    """
+    found = collect_versions()
+    expected = found["pyproject.toml"]
+    divergent = {name: value for name, value in found.items() if value != expected}
+    for name, value in sorted(found.items()):
+        marker = "  " if value == expected else "! "
+        print(f"{marker}{name}: {value}")
+    if divergent:
+        print(f"\nVersions diverge from pyproject.toml ({expected}). "
+              f"Run: python scripts/bump_version.py {expected}", file=sys.stderr)
+        return 1
+    print(f"\nAll artifacts agree on {expected}.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Synchronize BuildAnchor project versions.")
     group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--check", action="store_true",
+                       help="Report version divergence across artifacts and exit 1 if any. Changes nothing.")
     group.add_argument("version", nargs="?", help="Explicit new version (e.g. 0.3.3)")
     group.add_argument("--patch", action="store_true", help="Bump patch version (e.g. 0.3.2 -> 0.3.3)")
     group.add_argument("--minor", action="store_true", help="Bump minor version (e.g. 0.3.2 -> 0.4.0)")
     group.add_argument("--major", action="store_true", help="Bump major version (e.g. 0.3.2 -> 1.0.0)")
 
     args = parser.parse_args()
+    if args.check:
+        return check_versions()
     current_version = read_current_version()
     print(f"Current version: {current_version}")
 
@@ -145,6 +206,7 @@ def main() -> int:
     update_node_package(new_version)
     update_pom(new_version)
     update_formula(new_version)
+    update_transports(new_version)
 
     print(f"\nAll version markers successfully synchronized to {new_version}.")
     return 0

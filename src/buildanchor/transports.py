@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from . import schema as schema_module
 from .engine import BuildAnchor, BuildAnchorError
-
 
 # HTTP routes are owned by the HTTP transport. SDKs derive their operation
 # paths from this registry instead of maintaining divergent endpoint lists.
@@ -28,6 +29,7 @@ HTTP_ENDPOINTS = {
     "/v1/find-package": "build.find_package",
     "/v1/cmd": "build.cmd",
     "/v1/modules": "build.modules",
+    "/v1/doctor": "build.doctor",
 }
 
 # ---------------------------------------------------------------------------
@@ -269,15 +271,29 @@ TOOLS = [
     {
         "name": "get_build_truth",
         "description": (
-            "Returns a compact (<= 400 token) authoritative build truth summary for the repository. "
-            "Covers build system, runtime versions, compatibility constraints, and verified validation commands. "
-            "Inject this first before modifying code or running builds."
+            "CALL THIS FIRST before modifying code, changing dependencies, or running builds. "
+            "Returns authoritative build truth for the repository: build system, runtime versions, "
+            "compatibility constraints, and the commands that validate a change. "
+            "detail='summary' (default) is a compact <=400 token block to inject into your context; "
+            "detail='full' adds modules, dependencies, evidence digests and limitations; "
+            "detail='changed' reports what changed against a git baseline and what it affects."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Path to the repository root."},
                 "objective": {"type": "string", "description": "What you are about to do (used for mismatch detection)."},
+                "detail": {
+                    "type": "string",
+                    "description": "Level of detail. Default: 'summary'.",
+                    "enum": ["summary", "full", "changed"],
+                },
+                "baseline": {"type": "string", "description": "Git baseline for detail='changed'. Default: HEAD."},
+                "schema": {
+                    "type": "string",
+                    "description": "Report schema for detail='full'. Default: 'v2'. 'v1' is deprecated.",
+                    "enum": ["v1", "v2"],
+                },
             },
         },
     },
@@ -301,8 +317,12 @@ TOOLS = [
     {
         "name": "get_test_command",
         "description": (
-            "Resolve verified test command with optional monorepo scoping ('ui', 'backend', or specific package) "
-            "and git-diff change detection."
+            "Resolve the command for a build phase, with optional monorepo scoping ('ui', 'backend', or a "
+            "specific package) and git-diff change targeting. Returns 'command' together with the "
+            "'working_directory' it must run in — run it there, not at the repository root. "
+            "'command_status' reports how far the command has actually been proven: 'declared' (found in a "
+            "manifest, never executed), 'resolvable' (its entrypoint exists), 'collects' (a discovery probe "
+            "succeeded), or 'passes' (the full command exited 0). Treat 'declared' as a candidate, not a fact."
         ),
         "inputSchema": {
             "type": "object",
@@ -326,6 +346,71 @@ TOOLS = [
     },
 ]
 
+# ---------------------------------------------------------------------------
+# Advertised tool surface.
+#
+# Every MCP tool schema this server advertises is resident in the agent's
+# context on every turn of every session, whether or not BuildAnchor is ever
+# called. The full registry above costs roughly 2,300 tokens per turn — more
+# than a BuildAnchor call typically saves — and its overlapping entries
+# ("inspect" vs "context" vs "llm_prompt" vs "get_build_truth" are four doors
+# into the same room) also cost the agent a turn when it picks the wrong one.
+#
+# So `tools/list` advertises three tools that cover the whole surface, for
+# about 400 tokens. The extended registry stays dispatchable by name, so any
+# caller that already knows a `build.*` tool keeps working, and setting
+# BUILDANCHOR_MCP_TOOLS=full restores the old listing verbatim.
+# ---------------------------------------------------------------------------
+
+CORE_TOOL_NAMES: tuple[str, ...] = ("get_build_truth", "get_test_command", "find_package")
+
+#: The `build.*` names predate the three core tools and overlap them. They are
+#: unadvertised, so they cost no context, but they remain a supported surface
+#: with two doors into the same room — which is how an agent could once get two
+#: different answers to the same question. They are deprecated in 1.3 and
+#: removed at 2.0. Each maps to the core tool that replaces it.
+DEPRECATED_TOOL_REPLACEMENTS: dict[str, str] = {
+    "build.llm_prompt": "get_build_truth",
+    "build.inspect": "get_build_truth with detail='full'",
+    "build.context": "get_build_truth",
+    "build.preflight": "get_build_truth",
+    "build.plan": "get_build_truth",
+    "build.change_impact": "get_build_truth with detail='changed'",
+    "build.validate_change": "get_build_truth with detail='changed'",
+    "build.repair_guidance": "get_build_truth with detail='changed'",
+    "build.compatibility": "get_build_truth with detail='full'",
+    "build.explain_dependency": "get_build_truth with detail='full'",
+    "build.token_estimate": "get_build_truth",
+    "build.find_package": "find_package",
+    "build.modules": "get_build_truth with detail='full'",
+    "build.cmd": "get_test_command",
+}
+
+
+def _with_deprecation_notice(tool: dict[str, Any]) -> dict[str, Any]:
+    replacement = DEPRECATED_TOOL_REPLACEMENTS.get(tool["name"])
+    if not replacement:
+        return tool
+    annotated = dict(tool)
+    annotated["description"] = (
+        f"DEPRECATED — removed in BuildAnchor 2.0; use {replacement}. " + tool["description"]
+    )
+    return annotated
+
+
+def advertised_tools(mode: str | None = None) -> list[dict[str, Any]]:
+    """Return the tools to advertise in ``tools/list``.
+
+    ``mode`` defaults to the ``BUILDANCHOR_MCP_TOOLS`` environment variable:
+    ``core`` (default) lists the three core tools, ``full`` lists everything.
+    """
+    selected = (mode or os.environ.get("BUILDANCHOR_MCP_TOOLS", "core")).strip().lower()
+    if selected == "full":
+        return [_with_deprecation_notice(tool) for tool in TOOLS]
+    core = {tool["name"]: tool for tool in TOOLS}
+    return [core[name] for name in CORE_TOOL_NAMES if name in core]
+
+
 # MCP prompts — injectable templates surfaced to Claude Desktop / Cursor / Continue.dev
 PROMPTS = [
     {
@@ -344,7 +429,7 @@ def _mcp_version() -> str:
         from importlib.metadata import version
         return version("buildanchor")
     except Exception:
-        return "1.1.6"
+        return "1.12.2"
 
 
 def _json_response(value: Any) -> str:
@@ -389,7 +474,7 @@ class MCPServer:
                 },
             }
         if method == "tools/list":
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": TOOLS}}
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": advertised_tools()}}
         if method == "prompts/list":
             return {"jsonrpc": "2.0", "id": request_id, "result": {"prompts": PROMPTS}}
         if method == "resources/list":
@@ -421,12 +506,36 @@ class MCPServer:
         return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": f"method not found: {method}"}}
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = self._call_tool(name, arguments)
+        replacement = DEPRECATED_TOOL_REPLACEMENTS.get(name)
+        if replacement and isinstance(result, dict):
+            # Carried in the response rather than logged, because the caller
+            # that needs to hear it is the one reading the response.
+            result = dict(result)
+            result["_deprecation"] = (
+                f"'{name}' is deprecated and will be removed in BuildAnchor 2.0. "
+                f"Use {replacement}."
+            )
+        return result
+
+    def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         engine = self._engine(arguments.get("workspace"))
         freshness = str(arguments.get("freshness", "cached"))
         if freshness not in {"cached", "refresh"}:
             raise BuildAnchorError("freshness must be 'cached' or 'refresh'")
-        report = engine.inspect() if freshness == "refresh" else engine._inspect_cached()
+        if freshness == "refresh":
+            engine._invalidate_scan()
+            report = engine.inspect()
+        else:
+            report = engine._inspect_cached()
         if name in {"build.llm_prompt", "get_build_truth"}:
+            detail = str(arguments.get("detail", "summary"))
+            if detail == "full":
+                return schema_module.render(
+                    report.to_dict(), str(arguments.get("schema", schema_module.CURRENT_SCHEMA))
+                )
+            if detail == "changed":
+                return engine.change_impact(str(arguments.get("baseline", "HEAD")), report).to_dict()
             block = engine.llm_prompt(str(arguments.get("objective", "")))
             return block.to_dict()
         if name == "build.token_estimate":
@@ -478,14 +587,16 @@ class MCPServer:
             return {
                 "schema_version": "v1",
                 "session_id": report.session_id,
-                "is_monorepo": len(modules) > 1 or (len(modules) == 1 and modules[0].path != "."),
+                "is_monorepo": bool((report.repository or {}).get("is_monorepo", False)),
                 "modules": [m.to_dict() for m in modules],
             }
+        if name == "build.doctor":
+            return engine.diagnose(arguments.get("path") or None)
         if name in {"build.cmd", "get_test_command"}:
             phase = str(arguments.get("phase", "test"))
             scope = arguments.get("scope")
             changed = bool(arguments.get("changed", False))
-            return engine.resolve_command(phase, scope=scope, changed=changed)
+            return engine.resolve_command(phase, scope=scope, changed=changed, report=report)
         raise BuildAnchorError(f"unknown tool: {name}")
 
     def _engine(self, workspace: str | None) -> BuildAnchor:
@@ -502,13 +613,13 @@ class MCPServer:
 class HTTPHandler(BaseHTTPRequestHandler):
     server_version = "BuildAnchor/0.2"
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         if self.path == "/healthz":
             self._send(200, {"status": "ok", "service": "buildanchor"})
         else:
             self._send(404, {"error": "not found"})
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         length = int(self.headers.get("content-length", "0"))
         try:
             body = json.loads(self.rfile.read(length) or b"{}")

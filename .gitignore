@@ -24,3 +24,8 @@ coverage.xml
 docs/ORGANIZATION_AND_SCALE_PLAN.md
 PRE_PUSH_AUDIT.md
 *.local.md
+
+# BuildAnchor's verification cache (.buildanchor/verified.json) is deliberately
+# NOT ignored: it records which commands are proven for which manifest digest,
+# which is a fact about the repository rather than about one machine. Commit it
+# so a fresh clone already knows, and so CI's evidence is not thrown away.

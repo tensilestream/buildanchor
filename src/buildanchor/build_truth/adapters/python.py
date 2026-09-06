@@ -9,20 +9,47 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ..core import manifest_parsing
+
 
 class PythonAdapter:
     system = "python"
 
     def collect_facts(self, engine: Any, paths: list[Path], facts: list, evidence: list, dependencies: list[dict[str, Any]]) -> None:
-        path, text = engine._first_text([path for path in paths if path.name == "pyproject.toml"])
-        if not path:
-            return
-        runtime = re.search(r"requires-python\s*=\s*[\"']([^\"']+)", text)
-        if runtime:
-            engine._fact("runtime.python", runtime.group(1), path, evidence, facts)
-        for dependency in re.findall(r"[\"']([A-Za-z0-9_.-]+(?:[<>=!~].*)?)[\"']", text):
-            if any(operator in dependency for operator in (">", "<", "=", "~")):
-                dependencies.append({"coordinate": dependency, "source": "declared", "status": "unresolved"})
+        """Collect runtime facts and declared dependencies from every manifest.
+
+        Every ``pyproject.toml`` is read, not just the first in sort order: in a
+        polyglot repository the first is an arbitrary project, and reporting its
+        dependencies as the repository's is a confident wrong answer.
+        """
+        manifests = sorted({path for path in paths if path.name == "pyproject.toml"})
+        for path in manifests:
+            text = engine._read(path)
+            if not text:
+                continue
+            module = self._module_label(engine, path)
+            runtime = manifest_parsing.requires_python(text)
+            if runtime:
+                engine._fact(
+                    "runtime.python", runtime, path, evidence, facts,
+                    module=None if module == "." else module,
+                )
+            for coordinate, scope in manifest_parsing.python_dependencies(text):
+                dependencies.append({
+                    "coordinate": coordinate,
+                    "scope": scope,
+                    "module": module,
+                    "source": "declared",
+                    "status": "unresolved",
+                })
+
+    @staticmethod
+    def _module_label(engine: Any, path: Path) -> str:
+        try:
+            relative = path.parent.relative_to(engine.workspace).as_posix()
+        except ValueError:
+            return "."
+        return relative if relative != "." else "."
 
     def find_package(self, engine: Any, name: str, show_usage: bool) -> list[dict]:
         normalized = re.sub(r"[-_.]+", "-", name).lower()
@@ -42,7 +69,7 @@ class PythonAdapter:
                         if metadata.is_file():
                             for line in metadata.read_text(encoding="utf-8", errors="replace").splitlines()[:20]:
                                 if line.startswith("Version:"): installed_version = line.split(":", 1)[1].strip()
-                            install_path = str(site_packages.relative_to(engine.workspace))
+                            install_path = site_packages.relative_to(engine.workspace).as_posix()
         declared_version, declared_file = None, None
         for filename in ("pyproject.toml", "requirements.txt", "requirements-dev.txt"):
             path = engine.workspace / filename

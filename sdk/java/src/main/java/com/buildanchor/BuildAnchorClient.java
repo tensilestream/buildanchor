@@ -95,6 +95,67 @@ public final class BuildAnchorClient implements AutoCloseable {
         return call("explain-dependency", jsonString("dependency", dependency), "/v1/explain-dependency", "explain-dependency", "--dependency", dependency);
     }
 
+    /** A compact authoritative block to inject into an agent's context. */
+    public BuildAnchorResponse llmPrompt() throws IOException, InterruptedException {
+        return llmPrompt("");
+    }
+
+    public BuildAnchorResponse llmPrompt(String objective) throws IOException, InterruptedException {
+        return call("llm-prompt", jsonString("objective", objective), "/v1/llm-prompt", "llm-prompt", "--objective", objective);
+    }
+
+    /** Estimated token cost of each operation. */
+    public BuildAnchorResponse tokenEstimate() throws IOException, InterruptedException {
+        return call("token-estimate", "{}", "/v1/token-estimate", "token-estimate");
+    }
+
+    /** Ecosystem rules that catch incompatible edits. */
+    public BuildAnchorResponse compatibility() throws IOException, InterruptedException {
+        return call("compatibility", "{}", "/v1/compatibility", "compatibility");
+    }
+
+    /** Whether a package is installed, declared, and already imported. */
+    public BuildAnchorResponse findPackage(String packageName) throws IOException, InterruptedException {
+        return call("find-package", jsonString("package", packageName), "/v1/find-package", "find", "--package", packageName);
+    }
+
+    /** Every project, its working directory and its commands. */
+    public BuildAnchorResponse modules() throws IOException, InterruptedException {
+        return call("modules", "{}", "/v1/modules", "modules");
+    }
+
+    /** The command for a phase, where it runs, and how far it is proven. */
+    public BuildAnchorResponse resolveCommand(String phase) throws IOException, InterruptedException {
+        return call("cmd", jsonString("phase", phase), "/v1/cmd", "cmd", phase);
+    }
+
+    /** Explain the repository, or why one directory is not reported as a module. */
+    public BuildAnchorResponse diagnose() throws IOException, InterruptedException {
+        return call("doctor", "{}", "/v1/doctor", "doctor");
+    }
+
+    public BuildAnchorResponse diagnose(String path) throws IOException, InterruptedException {
+        return call("doctor", jsonString("path", path), "/v1/doctor", "doctor", path);
+    }
+
+    /**
+     * Execute a discovery probe per module and record which commands genuinely
+     * run. Local mode only: this executes project-defined code, which a remote
+     * caller cannot consent to.
+     */
+    public BuildAnchorResponse verifyCommands() throws IOException, InterruptedException {
+        return verifyCommands("collects");
+    }
+
+    public BuildAnchorResponse verifyCommands(String level) throws IOException, InterruptedException {
+        if (endpoint != null) {
+            throw new IllegalStateException(
+                    "verifyCommands is local-only: it executes project-defined code, which a remote "
+                            + "caller cannot consent to. Build the client without an endpoint.");
+        }
+        return call("verify", "{}", null, "verify", "--verify-level", level);
+    }
+
     private BuildAnchorResponse call(String operation, String body, String path, String... localArgs) throws IOException, InterruptedException {
         if (endpoint == null) {
             String[] command = new String[localArgs.length + 5];

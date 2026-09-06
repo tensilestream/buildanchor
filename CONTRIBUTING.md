@@ -9,7 +9,7 @@ From a fresh checkout, run the test suite and inspect another repository immedia
 ```bash
 uv sync
 uv run python -m unittest discover -s tests -v
-uv run python benchmarks/benchmark_cli.py --iterations 10 --warmups 2 --format text
+uv run python benchmarks/credibility_benchmark.py --format text
 uv run buildanchor inspect --workspace /path/to/other-repository --format text
 ```
 

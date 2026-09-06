@@ -31,4 +31,4 @@ class GoAdapter:
         installed = vendor.is_dir()
         usage = engine._grep_usage(name, {".go"}) if show_usage else []
         if not installed and declared_version is None and not usage: return []
-        return [{"ecosystem": self.system, "package": name, "installed": installed, "installed_version": declared_version, "declared_version": declared_version, "install_path": str(vendor.relative_to(engine.workspace)) if installed else None, "import_patterns": [f'import "{name}"'], "usage": usage[:5]}]
+        return [{"ecosystem": self.system, "package": name, "installed": installed, "installed_version": declared_version, "declared_version": declared_version, "install_path": vendor.relative_to(engine.workspace).as_posix() if installed else None, "import_patterns": [f'import "{name}"'], "usage": usage[:5]}]
